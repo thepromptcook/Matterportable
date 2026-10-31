@@ -98,6 +98,13 @@ namespace Matterportable.Core
             return mesh;
         }
 
+        /// <summary>Writes debug/dam-structure.txt (field layout of the file) - used when something can't be decoded.</summary>
+        public static void WriteDiagnostics(string spaceDir, byte[] data)
+        {
+            try { IoUtil.WriteAllTextAtomic(System.IO.Path.Combine(spaceDir, CacheLayout.DebugDir, "dam-structure.txt"), ProtoInspector.Describe(data, 4, 400)); }
+            catch (System.IO.IOException) { }
+        }
+
         /// <summary>Distinct material names in file order (used to work out which textures to download).</summary>
         public static List<string> ReadMaterialNames(byte[] data)
         {
@@ -132,8 +139,11 @@ namespace Matterportable.Core
         static Chunk ReadSimpleChunk(ProtoReader r)
         {
             var xyz = new List<float>();
-            var uv = new List<float>();
             var faces = new List<ulong>();
+            // Every other float array we meet, in preference order, as texture-coordinate candidates
+            // (the field that holds UVs differs between .dam versions).
+            var candidates = new List<List<float>>();
+            var vertexFloats = new SortedDictionary<int, List<float>>();
             string name = null, material = null;
             while (r.TryReadTag(out int f, out int w))
             {
@@ -142,9 +152,10 @@ namespace Matterportable.Core
                     var v = r.ReadMessage();
                     while (v.TryReadTag(out int vf, out int vw))
                     {
-                        if (vf == 1) v.ReadFloats(vw, xyz);
-                        else if (vf == 4) v.ReadFloats(vw, uv);
-                        else v.Skip(vw);
+                        if (vf == 1) { v.ReadFloats(vw, xyz); continue; }
+                        if (vw != ProtoReader.LengthDelimited && vw != ProtoReader.Fixed32) { v.Skip(vw); continue; }
+                        if (!vertexFloats.TryGetValue(vf, out var list)) vertexFloats[vf] = list = new List<float>();
+                        if (!TryReadFloats(v, vw, list)) vertexFloats.Remove(vf);
                     }
                 }
                 else if (f == 2 && w == ProtoReader.LengthDelimited)
@@ -158,8 +169,16 @@ namespace Matterportable.Core
                 }
                 else if (f == 3 && w == ProtoReader.LengthDelimited) name = r.ReadString();
                 else if (f == 4 && w == ProtoReader.LengthDelimited) material = r.ReadString();
+                else if (w == ProtoReader.LengthDelimited)
+                {
+                    var list = new List<float>();
+                    if (TryReadFloats(r, w, list)) candidates.Add(list);
+                }
                 else r.Skip(w);
             }
+            if (vertexFloats.TryGetValue(4, out var uv4)) candidates.Insert(0, uv4);
+            int insertAt = candidates.Count > 0 && vertexFloats.ContainsKey(4) ? 1 : 0;
+            foreach (var kv in vertexFloats) if (kv.Key != 4) candidates.Insert(insertAt++, kv.Value);
 
             if (xyz.Count % 3 != 0) throw new FormatException($"Chunk '{name}' has {xyz.Count} position floats (not a multiple of 3).");
             int n = xyz.Count / 3;
@@ -170,14 +189,57 @@ namespace Matterportable.Core
                 if (faces[i] >= (ulong)n) throw new FormatException($"Chunk '{name}' references vertex {faces[i]} but has only {n}.");
                 idx[i] = (int)faces[i];
             }
-            return new Chunk
+
+            // Per-vertex UVs.
+            foreach (var c in candidates)
+                if (c.Count == n * 2 && LooksLikeUvs(c))
+                    return new Chunk { Xyz = xyz.ToArray(), Uv = c.ToArray(), Faces = idx, Name = name, Material = material };
+
+            // Per-corner UVs: un-index the chunk so every triangle corner gets its own vertex.
+            foreach (var c in candidates)
             {
-                Xyz = xyz.ToArray(),
-                Uv = uv.Count == n * 2 ? uv.ToArray() : null,
-                Faces = idx,
-                Name = name,
-                Material = material,
-            };
+                if (c.Count != idx.Length * 2 || idx.Length == 0 || !LooksLikeUvs(c)) continue;
+                var px = new float[idx.Length * 3];
+                var corners = new int[idx.Length];
+                for (int k = 0; k < idx.Length; k++)
+                {
+                    px[3 * k] = xyz[3 * idx[k]];
+                    px[3 * k + 1] = xyz[3 * idx[k] + 1];
+                    px[3 * k + 2] = xyz[3 * idx[k] + 2];
+                    corners[k] = k;
+                }
+                return new Chunk { Xyz = px, Uv = c.ToArray(), Faces = corners, Name = name, Material = material };
+            }
+
+            return new Chunk { Xyz = xyz.ToArray(), Uv = null, Faces = idx, Name = name, Material = material };
+        }
+
+        static bool TryReadFloats(ProtoReader r, int wireType, List<float> into)
+        {
+            if (wireType == ProtoReader.LengthDelimited)
+            {
+                var probe = r.ReadMessage();
+                if (probe.Remaining % 4 != 0) return false;
+                while (!probe.AtEnd) into.Add(probe.ReadFloat());
+                return true;
+            }
+            if (wireType == ProtoReader.Fixed32) { into.Add(r.ReadFloat()); return true; }
+            r.Skip(wireType);
+            return false;
+        }
+
+        /// <summary>Texture coordinates are finite and of moderate size (wrapping UVs allowed).</summary>
+        static bool LooksLikeUvs(List<float> c)
+        {
+            if (c.Count == 0) return false;
+            int inside = 0, step = Math.Max(1, c.Count / 2000);
+            for (int i = 0; i < c.Count; i += step)
+            {
+                float v = c[i];
+                if (float.IsNaN(v) || float.IsInfinity(v)) return false;
+                if (v > -64f && v < 64f) inside++;
+            }
+            return inside >= 0.9 * ((c.Count + step - 1) / step);
         }
 
         sealed class Quantized

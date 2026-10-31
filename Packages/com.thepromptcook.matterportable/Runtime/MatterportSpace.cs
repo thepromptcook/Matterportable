@@ -273,6 +273,7 @@ namespace Matterportable
                 {
                     var bytes = File.ReadAllBytes(CacheLayout.Resolve(dir, manifest.Mesh.File));
                     var mesh = DamDecoder.Decode(bytes, _log);
+                    if (!mesh.HasUvs) DamDecoder.WriteDiagnostics(dir, bytes);
                     geo = SpaceGeometry.Build(mesh, cal);
                 }
                 var sweeps = SweepBuilder.Build(manifest, cal, geo, _log);

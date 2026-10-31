@@ -229,3 +229,44 @@ namespace Matterportable.Tests
         }
     }
 }
+
+namespace Matterportable.Tests
+{
+    public class DamUvVariantTests
+    {
+        static byte[] Chunk(int uvField, bool perCorner)
+        {
+            var xyz = new System.Collections.Generic.List<float> { 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0 };
+            var faces = new ulong[] { 0, 1, 2, 0, 2, 3 };
+            var uv = new System.Collections.Generic.List<float>();
+            int count = perCorner ? faces.Length : 4;
+            for (int i = 0; i < count; i++) { uv.Add(0.1f * i); uv.Add(0.05f * i); }
+            var verts = new ProtoWriter();
+            verts.PackedFloats(1, xyz);
+            verts.PackedFloats(uvField, uv);
+            var f = new ProtoWriter();
+            f.PackedVarints(1, faces);
+            var chunk = new ProtoWriter();
+            chunk.Message(1, verts);
+            chunk.Message(2, f);
+            chunk.String(4, "m_000.jpg");
+            var root = new ProtoWriter();
+            root.Message(1, chunk);
+            return root.ToArray();
+        }
+
+        [NUnit.Framework.TestCase(2, false)]
+        [NUnit.Framework.TestCase(3, false)]
+        [NUnit.Framework.TestCase(4, true)]
+        public void FindsUvsInOtherFieldsAndPerCorner(int field, bool perCorner)
+        {
+            var mesh = DamDecoder.Decode(Chunk(field, perCorner));
+            NUnit.Framework.Assert.IsTrue(mesh.HasUvs);
+            NUnit.Framework.Assert.AreEqual(2, mesh.TriangleCount);
+            if (perCorner) NUnit.Framework.Assert.AreEqual(6, mesh.VertexCount);
+            // Third corner of the second triangle uses UV #5 when per-corner, vertex 3's UV otherwise.
+            int v = mesh.Parts[0].Indices[5];
+            NUnit.Framework.Assert.AreEqual(perCorner ? 0.5f : 0.3f, mesh.Uvs[2 * v], 1e-6);
+        }
+    }
+}

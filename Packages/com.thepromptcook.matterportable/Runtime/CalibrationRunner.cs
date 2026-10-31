@@ -45,7 +45,13 @@ namespace Matterportable
         {
             return Task.Run(() =>
             {
-                var mesh = DamDecoder.Decode(File.ReadAllBytes(CacheLayout.Resolve(spaceDir, manifest.Mesh.File)), log);
+                var damBytes = File.ReadAllBytes(CacheLayout.Resolve(spaceDir, manifest.Mesh.File));
+                var mesh = DamDecoder.Decode(damBytes, log);
+                if (!mesh.HasUvs)
+                {
+                    DamDecoder.WriteDiagnostics(spaceDir, damBytes);
+                    log?.Warn("The mesh has no texture coordinates; wrote debug/dam-structure.txt for diagnosis.");
+                }
                 var cal = SpaceCalibrator.CheckGeometry(manifest, mesh, new SpaceCalibration(), log);
                 ct.ThrowIfCancellationRequested();
                 var input = CalibrationPipeline.LoadInput(spaceDir, manifest, mesh, cal,
