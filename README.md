@@ -6,18 +6,15 @@ Paste `https://discover.matterport.com/space/rGMMnZDh3Tf` (or any Matterport lin
 the space the way Matterport does. Click to move between 360° capture points (sweeps) with the same cross-fading
 transition, drag to look around, step with W/A/S/D, and switch to Dollhouse or Floor plan views.
 
-> **Status.** This was built in a cloud environment that could not run the Unity Editor and was blocked from
-> Matterport's viewer, so it has **not yet been run against a real Matterport space or inside Unity**.
+> **Status.** It works on a real space ("359 N Ridgewood Pl", 58 sweeps) in Unity 6000.5 with URP.
 >
-> **What has been verified:**
-> - The engine-independent core passes 48 automated tests against a generated stand-in house written in Matterport's
->   formats. This covers downloading through a fake Matterport server with expiring links and renamed fields, mesh
->   decoding, coordinate conversion and the panorama alignment solver.
-> - All Unity code compiles against Unity's API, in both editor and player configurations.
-> - The shader HLSL compiles with glslang.
+> **Verified on every change, without Unity:**
+> - 53 automated core tests. They run against a procedural house and a fake Matterport server, and cover downloads,
+>   mesh decoding, coordinate frames and panorama alignment.
+> - Compile checks of all Unity code in the editor, player and Input System configurations.
+> - Shader HLSL compilation.
 >
-> The first run on your machine may surface format differences. See **Troubleshooting**: the importer writes
-> diagnostics designed to make those quick to fix.
+> A PlayMode test covers loading and navigation inside Unity.
 
 ---
 
@@ -35,7 +32,7 @@ transition, drag to look around, step with W/A/S/D, and switch to Dollhouse or F
 **No network?** Choose **Try the offline demo house** in the menu. It's a procedural house in Matterport's format,
 so you can check the whole pipeline offline.
 
-The menu appears automatically whenever you press Play in a scene without a Matterport Space. Downloads are cached
+The menu also appears automatically when you press Play in an empty scene (no camera, no Matterport Space). Downloads are cached
 in `<project>/MatterportCache/<model id>/`, outside `Assets`, so Unity never imports them.
 
 The editor workflow is still available: *Window ▸ Matterportable ▸ Import Space* creates a dedicated scene per
@@ -85,8 +82,14 @@ edits apply live during Play.
   - F2 cycles render views: mesh texture, panorama only, occlusion visibility and blend weights.
   - F3 labels sweeps, and P runs an automatic tour.
 - **Headless tools.** A CLI (`tools/Matterportable.Cli`) downloads, inspects and exports spaces to OBJ without Unity.
-- **Tests that don't need Unity.** `dotnet test tools/Matterportable.Core.Tests` runs the core suite in seconds. The
-  same files also run in Unity's Test Runner (EditMode), alongside a few Unity-only tests.
+- **Tests.** The core suite runs in seconds with `dotnet test tools/Matterportable.Core.Tests`. The same files run in
+  Unity's Test Runner (EditMode), alongside Unity-only EditMode tests and a **PlayMode** test that loads a space,
+  moves between sweeps and switches views.
+- **Quiet Console, full logs.** Progress goes to `MatterportCache/<id>/debug/load.log`. Turn on **Verbose Logging**
+  in the viewer settings to also see it in the Console.
+- **One-click diagnostics.** **Copy Diagnostics** (inspector or import window) puts a redacted report about the
+  space on your clipboard: manifest, alignment, load log, mesh structure and API sample. It's all that's needed to
+  debug a space.
 - **Builds.** Spaces used by build scenes are bundled into `StreamingAssets` automatically during a build. You can
   toggle this under *Tools ▸ Matterportable*.
 
@@ -133,7 +136,7 @@ its assumptions against the data:
 | *"Matterport's bot protection blocked the request"* | Use the **browser export**: in the import window click **Copy Browser Export Script**. Open `https://my.matterport.com/show/?m=<id>` in your normal browser, paste the script into the developer console (F12 ▸ Console) and press Enter. A `matterport-<id>.json` file downloads. Then click **Import Browser Export…** and pick it. Do this promptly, because the links inside expire. |
 | Panoramas look rotated, mirrored or don't line up with the mesh | Inspector ▸ **Re-run Panorama Alignment**. If the score shown is low, open **Alignment (advanced)**: change *Sweep rotation*, try **Rotate faces 90°**, or edit faces directly. Changes apply live in Play mode and are saved as manual. |
 | Mesh is sideways or inside out | Inspector ▸ Alignment ▸ *Mesh frame / Sweep frame / Flip winding*. |
-| Download or decode error | Look in `MatterportCache/<id>/debug/`: `graph-query.graphql`, `graph-response.json` and `graph-pruned-fields.txt`. The CLI's `matterportable info <space dir>` summarises a cached space. These files are what's needed to fix a format difference quickly. |
+| Download, decode or display problem | Click **Copy Diagnostics** in the space's inspector (or the import window) and paste the report into your issue or chat. The raw files are in `MatterportCache/<id>/debug/`. |
 | "Space only offers streamed mesh tiles" | Newer spaces may only have 3D-tile meshes, which aren't supported yet. The space still works panorama-only: click navigation with transitions, skybox rendering. |
 | Pink / black surfaces | The project uses HDRP, which isn't supported. Use the Built-in render pipeline or URP. |
 
@@ -141,51 +144,55 @@ its assumptions against the data:
 
 ```
 Packages/com.thepromptcook.matterportable/   the Unity package
-  Runtime/Core/       engine-independent C#: link parsing, GraphQL, downloader, DAM decoder, BVH, solver, demo space
-  Runtime/            MatterportSpace (loader), PanoramaCache, MatterportNavigator, MatterportHud, settings
-  Runtime/Resources/  shaders (projection, skybox, markers, face blit)
-  Editor/             import window, inspector, scene builder, build hook
-  Tests/Core/         NUnit tests (run in Unity and with `dotnet test`)
-  Tests/Editor/       Unity-only EditMode tests
-  Tools~/             browser-export.js (fallback exporter)
-tools/
-  Matterportable.Cli/        command-line tool (download, import, demo, info, obj, align, query, browser-script)
-  Matterportable.Core.Tests/ runs Tests/Core outside Unity
-  UnityCompileCheck/         compiles the Unity code against Unity's reference assemblies (no Unity install needed)
-  check_shaders.py           compiles the shader HLSL with glslang
-  test_browser_export.js     runs the browser exporter against a mock endpoint
-  generate_metas.py          creates .meta files for new package files
+  Runtime/Core/        engine-independent C#: link parsing, GraphQL, downloader, DAM decoder, BVH, alignment
+                       solver, demo space, diagnostics
+  Runtime/Space/       MatterportSpace (loading), SpaceMesh, SpaceRenderer (shader state), PanoramaCache, CalibrationRunner
+  Runtime/Navigation/  MatterportNavigator (camera, transitions, view modes), NavInput, SweepMarkers
+  Runtime/UI/          MatterportLauncher (in-game menu), MatterportHud
+  Runtime/Resources/   shaders (projection, skybox, markers, face blit)
+  Editor/              import window, inspector, scene builder, build hook
+  Tests/               Core (dotnet + Unity) · Editor (EditMode) · PlayMode
+  Tools~/              browser-export.js (fallback exporter)
+Assets/Editor/         project setup (URP, Input System, Launcher scene)
+tools/                 check.sh, setup-dev.sh, CLI, test runner, Unity compile check, shader/meta/browser checks
+CLAUDE.md, .claude/skills/   notes and skills that make future work with Claude Code faster
 ```
 
 ## Developing without Unity
 
 ```bash
-dotnet test tools/Matterportable.Core.Tests
+tools/setup-dev.sh
 ```
 
 ```bash
-dotnet build tools/UnityCompileCheck
+tools/check.sh
 ```
 
-```bash
-dotnet build tools/UnityCompileCheck -p:Player=true
-```
+`setup-dev.sh` prepares a machine once: .NET 8 SDK, glslang and Unity reference assemblies. `check.sh` runs every
+check in about 20 seconds:
+- the core tests
+- Unity compile checks in editor, player and Input System configurations
+- the CLI build
+- that the browser script matches the query
+- the browser export test
+- the shader compile
+- `.meta` coverage
 
-```bash
-python3 tools/check_shaders.py
-```
-
-```bash
-node tools/test_browser_export.js
-```
+The command-line tool works on spaces without Unity:
 
 ```bash
 dotnet run --project tools/Matterportable.Cli -- download https://discover.matterport.com/space/rGMMnZDh3Tf
 ```
 
 ```bash
-dotnet run --project tools/Matterportable.Cli -- demo --size 1024
+dotnet run --project tools/Matterportable.Cli -- diagnose MatterportCache/rGMMnZDh3Tf
 ```
+
+**Working with Claude Code:**
+- `CLAUDE.md` holds the project map, rules and conventions.
+- `.claude/skills/matterportable-dev` is the change/verify/debug loop, with a symptom-to-code map. It includes the
+  Matterport format facts learned from real data.
+- `.claude/skills/matterportable-from-scratch` is the blueprint for rebuilding or porting the project.
 
 ## Limitations
 
