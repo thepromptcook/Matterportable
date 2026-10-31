@@ -75,3 +75,7 @@ The server is graphql-java style. Validation errors carry a line/column location
 - `panos/<sweep>/<size>/face0..5.jpg`
 - `debug/`, holding `graph-query.graphql`, `graph-response.json`, `graph-pruned-fields.txt`, `load.log`,
   `dam-structure.txt` and `diagnostics.txt`
+
+## Engines confirmed by the user on real data
+- Unity 6000.5 (URP, Windows) and Godot 4 .NET (Windows, .NET 10 SDK) both load, render and navigate
+  "359 N Ridgewood Pl" (rGMMnZDh3Tf) from the shared `MatterportCache/`.
