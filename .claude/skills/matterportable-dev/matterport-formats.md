@@ -79,3 +79,22 @@ The server is graphql-java style. Validation errors carry a line/column location
 ## Engines confirmed by the user on real data
 - Unity 6000.5 (URP, Windows) and Godot 4 .NET (Windows, .NET 10 SDK) both load, render and navigate
   "359 N Ridgewood Pl" (rGMMnZDh3Tf) from the shared `MatterportCache/`.
+
+## Measurement mode (Matterport behaviour we mirror)
+
+From Matterport's help center and Matterport-made videos (the help pages need JavaScript, so read them through a search
+engine's summary):
+- Visitors can measure in Showcase; their measurements are temporary and can't be saved.
+- Click to place points. **Continuous lines** are on by default: each click adds a connected segment. Click
+  **Confirm** or press **Escape** to stop the current line; Escape again stops creating measurements.
+- **Snapping** is on by default and snaps to the nearest corner or edge (the cursor is a "+").
+- With snapping on, **Shift** snaps the line to the nearest axis. **Alt** removes all snapping.
+- Settings: Snapping, Continuous lines, and imperial or metric units.
+- Measuring works in Inside, Dollhouse and Floor plan. Lines drawn in Floor plan are shown only in Floor plan.
+- Delete is through a measurement's menu (we use select + Delete/✕).
+
+Not confirmed, so these are our choices:
+- axis colours (red/green for the wall axes, blue for vertical)
+- the white pill labels
+- label format: `12' 4"` to the nearest inch, `3.76 m`
+- the M shortcut

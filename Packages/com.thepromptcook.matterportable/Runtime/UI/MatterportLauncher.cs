@@ -49,7 +49,7 @@ namespace Matterportable
         {
             NavInput.BeginFrame();
             if (_menuOpen) return;
-            if (NavInput.KeyDown(KeyCode.Escape)) ShowMenu();
+            if (NavInput.KeyDown(KeyCode.Escape) && !MatterportMeasure.OwnsEscape) ShowMenu();
             else if (_rig?.Space != null && _rig.Space.Error != null)
             {
                 _message = _rig.Space.Error;

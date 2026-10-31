@@ -9,19 +9,23 @@ namespace Matterportable
     {
         public MatterportSpace Space;
         public MatterportNavigator Navigator;
+        public MatterportMeasure Measure;
         public event Action MenuRequested;
 
         Label _status, _stats, _hint;
         HBoxContainer _floors;
         Button[] _modes;
-        Button _tour;
+        Button _tour, _measure;
         int _floorCount = -1;
 
         public override void _Ready()
         {
             var root = new Control { AnchorRight = 1, AnchorBottom = 1, MouseFilter = Control.MouseFilterEnum.Ignore };
             AddChild(root);
-            var top = new HBoxContainer { Position = new Vector2(12, 12), MouseFilter = Control.MouseFilterEnum.Ignore };
+            var top = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore, GrowVertical = Control.GrowDirection.Begin };
+            top.SetAnchorsPreset(Control.LayoutPreset.BottomLeft);
+            top.OffsetLeft = 12;
+            top.OffsetBottom = -12;
             root.AddChild(top);
             top.AddChild(MakeButton("☰ Menu", () => MenuRequested?.Invoke()));
             _modes = new[]
@@ -31,6 +35,9 @@ namespace Matterportable
                 MakeButton("Floor plan", () => Navigator.SetMode(MatterportNavigator.ViewMode.Floorplan)),
             };
             foreach (var b in _modes) { b.ToggleMode = true; top.AddChild(b); }
+            _measure = MakeButton("📏 Measure", () => Measure.SetActive(!Measure.Active));
+            _measure.ToggleMode = true;
+            top.AddChild(_measure);
             _tour = MakeButton("▶ Tour", () => Navigator.AutoTour = !Navigator.AutoTour);
             top.AddChild(_tour);
             _floors = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
@@ -38,12 +45,12 @@ namespace Matterportable
 
             _status = new Label { AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0.5f, AnchorBottom = 0.5f, GrowHorizontal = Control.GrowDirection.Both, HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore };
             root.AddChild(_status);
-            _stats = new Label { Position = new Vector2(12, 56), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
+            _stats = new Label { Position = new Vector2(12, 44), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore };
             root.AddChild(_stats);
             _hint = new Label
             {
-                AnchorTop = 1, AnchorBottom = 1, AnchorRight = 1, OffsetTop = -34, OffsetLeft = 12,
-                Text = "Drag to look · Click to move · W A S D step · ←/→ turn · Wheel zoom · 1/2/3 Inside/Dollhouse/Floor plan · [ ] prev/next · P tour · F1 stats · F2 render view · H hide · Esc menu",
+                AnchorRight = 1, OffsetTop = 12, HorizontalAlignment = HorizontalAlignment.Center,
+                Text = "Drag to look · Click to move · W A S D step · ←/→ turn · Wheel zoom · 1/2/3 Inside/Dollhouse/Floor plan · M measure · [ ] prev/next · P tour · F1 stats · F2 render view · H hide · Esc menu",
                 MouseFilter = Control.MouseFilterEnum.Ignore,
             };
             root.AddChild(_hint);
@@ -70,6 +77,8 @@ namespace Matterportable
             if (!Space.IsLoaded) return;
             for (int i = 0; i < _modes.Length; i++) _modes[i].SetPressedNoSignal((int)Navigator.Mode == i);
             _tour.Text = Navigator.AutoTour ? "■ Tour" : "▶ Tour";
+            _measure.SetPressedNoSignal(Measure.Active);
+            _measure.Visible = Space.Geometry != null;
             if (_floorCount != Space.FloorCount) BuildFloorButtons();
             _floors.Visible = Navigator.Mode != MatterportNavigator.ViewMode.Inside && Space.FloorCount > 1;
             if (_stats.Visible) _stats.Text = Stats();

@@ -9,7 +9,7 @@ namespace Matterportable
     /// <summary>
     /// The start menu (mirrors the Unity MatterportLauncher): paste a Matterport link, open the offline demo or a
     /// downloaded space. Esc or the Menu button returns here. Command line (after "--"): --open &lt;link|demo&gt;,
-    /// --sweep N, --mode inside|dollhouse|floorplan, --view N (F2 render view), --goto N (move there after loading),
+    /// --sweep N, --mode inside|dollhouse|floorplan, --view N (F2 render view), --goto N (move there after loading), --measure (draws a measurement),
     /// --screenshot file.png (quits after saving), for headless checks.
     /// </summary>
     public partial class Launcher : Node
@@ -23,6 +23,8 @@ namespace Matterportable
         MatterportSpace _space;
         MatterportNavigator _nav;
         Hud _hud;
+        MatterportMeasure _measure;
+        int _measureStep = -1;
         string _screenshot;
         string _mode;
         int _view, _goto = -1;
@@ -43,6 +45,7 @@ namespace Matterportable
                 if (args[i] == "--goto") int.TryParse(args[i + 1], out _goto);
                 if (args[i] == "--screenshot") _screenshot = args[i + 1];
             }
+            if (Array.IndexOf(args, "--measure") >= 0) _measureStep = 0;
             if (open == "demo") OpenDemo(sweep);
             else if (open != null) Open(open, sweep);
         }
@@ -130,12 +133,14 @@ namespace Matterportable
             CloseSpace();
             _space = new MatterportSpace { Name = "MatterportSpace", Link = link, StartSweep = sweep };
             _nav = new MatterportNavigator { Name = "Camera", Space = _space };
-            _hud = new Hud { Space = _space, Navigator = _nav };
+            _measure = new MatterportMeasure { Name = "Measure", Space = _space, Navigator = _nav };
+            _hud = new Hud { Space = _space, Navigator = _nav, Measure = _measure };
             _hud.MenuRequested += ShowMenu;
             _space.Loaded += s => s.DebugView = _view;
             _nav.StartMode = _mode == "dollhouse" ? MatterportNavigator.ViewMode.Dollhouse : _mode == "floorplan" ? MatterportNavigator.ViewMode.Floorplan : MatterportNavigator.ViewMode.Inside;
             AddChild(_space);
             AddChild(_nav);
+            AddChild(_measure);
             AddChild(_hud);
             _nav.MakeCurrent();
             _menu.Visible = false;
@@ -146,6 +151,8 @@ namespace Matterportable
             _space?.QueueFree();
             _nav?.QueueFree();
             _hud?.QueueFree();
+            _measure?.QueueFree();
+            _measure = null;
             _space = null;
             _nav = null;
             _hud = null;
@@ -157,6 +164,30 @@ namespace Matterportable
             _status.Text = "";
             RefreshSpaces();
             _menu.Visible = true;
+        }
+
+        /// <summary>
+        /// Automated check of measure mode: a two-segment line placed by clicks across the floor and up a wall, ended
+        /// with a real Escape key event (which must not open the menu), then a line in progress following the cursor.
+        /// </summary>
+        void MeasureDemo()
+        {
+            var size = GetViewport().GetVisibleRect().Size;
+            switch (_measureStep++)
+            {
+                case 0:
+                    _measure.SetActive(true);
+                    _measure.ClickAt(new Vector2(size.X * 0.30f, size.Y * 0.85f));
+                    _measure.ClickAt(new Vector2(size.X * 0.62f, size.Y * 0.80f));
+                    _measure.ClickAt(new Vector2(size.X * 0.62f, size.Y * 0.40f));
+                    Input.ParseInputEvent(new InputEventKey { Keycode = Key.Escape, Pressed = true });
+                    break;
+                case 3: // a few frames later: Escape has been delivered
+                    _measure.ClickAt(new Vector2(size.X * 0.20f, size.Y * 0.60f));
+                    GetViewport().WarpMouse(new Vector2(size.X * 0.45f, size.Y * 0.55f));
+                    _measureStep = -1;
+                    break;
+            }
         }
 
         public override void _UnhandledInput(InputEvent e)
@@ -175,12 +206,18 @@ namespace Matterportable
                 _goto = -1;
                 return;
             }
+            if (_measureStep >= 0 && _space.IsLoaded && _nav.CurrentSweep >= 0 && !_nav.IsChangingMode && _space.Panoramas.ActiveLoads == 0)
+            {
+                MeasureDemo();
+                return;
+            }
             if (_screenshotFrames < 0 && _space.IsLoaded && !_nav.IsMoving && !_nav.IsWaitingForPanorama && _goto < 0 && _space.Panoramas.ActiveLoads == 0 && _space.Panoramas.Queued == 0 && !_nav.IsChangingMode && _space.TexturesLoaded >= _space.Manifest.Textures.Count)
                 _screenshotFrames = 30;
             if (_screenshotFrames > 0 && --_screenshotFrames == 0)
             {
                 var err = GetViewport().GetTexture().GetImage().SavePng(_screenshot);
-                GD.Print($"[Matterportable] {_space.Status}; mode {_nav.Mode}, sweep {_nav.CurrentSweep}; screenshot {(err == Error.Ok ? "saved" : "failed: " + err)}");
+                var measured = _measure.Tool == null ? "" : $"; {_measure.Tool.Lines.Count} measurement(s), drawing {(_measure.Tool.Draft != null ? "yes" : "no")}, menu {(_menu.Visible ? "open" : "closed")}";
+                GD.Print($"[Matterportable] {_space.Status}; mode {_nav.Mode}, sweep {_nav.CurrentSweep}{measured}; screenshot {(err == Error.Ok ? "saved" : "failed: " + err)}");
                 GetTree().Quit(err == Error.Ok ? 0 : 1);
             }
         }

@@ -96,6 +96,14 @@ namespace Matterportable
                 case KeyCode.RightBracket: return UnityEngine.InputSystem.Key.RightBracket;
                 case KeyCode.Escape: return UnityEngine.InputSystem.Key.Escape;
                 case KeyCode.LeftShift: return UnityEngine.InputSystem.Key.LeftShift;
+                case KeyCode.RightShift: return UnityEngine.InputSystem.Key.RightShift;
+                case KeyCode.LeftAlt: return UnityEngine.InputSystem.Key.LeftAlt;
+                case KeyCode.RightAlt: return UnityEngine.InputSystem.Key.RightAlt;
+                case KeyCode.M: return UnityEngine.InputSystem.Key.M;
+                case KeyCode.Delete: return UnityEngine.InputSystem.Key.Delete;
+                case KeyCode.Backspace: return UnityEngine.InputSystem.Key.Backspace;
+                case KeyCode.Return: return UnityEngine.InputSystem.Key.Enter;
+                case KeyCode.KeypadEnter: return UnityEngine.InputSystem.Key.NumpadEnter;
                 default: return UnityEngine.InputSystem.Key.None;
             }
         }

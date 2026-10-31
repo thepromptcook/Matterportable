@@ -20,6 +20,7 @@ namespace Matterportable
         public float hintSeconds = 12f;
 
         MatterportNavigator _nav;
+        MatterportMeasure _measure;
         Camera _cam;
         float _fps, _frameMs;
         float _shownAt;
@@ -27,6 +28,7 @@ namespace Matterportable
         void Awake()
         {
             _nav = GetComponent<MatterportNavigator>();
+            _measure = GetComponent<MatterportMeasure>();
             _cam = GetComponent<Camera>();
             _shownAt = Time.unscaledTime;
         }
@@ -84,6 +86,13 @@ namespace Matterportable
                 if (GUI.Button(r, label, _nav.Mode == mode ? MpGui.ButtonOn : MpGui.Button)) _nav.SetMode(mode);
                 x = r.xMax + 4;
             }
+            if (_measure != null && space.Geometry != null)
+            {
+                var r = new Rect(x + 8, y, 84, h);
+                Block(r);
+                if (GUI.Button(r, "Measure", _measure.Active ? MpGui.ButtonOn : MpGui.Button)) _measure.SetActive(!_measure.Active);
+                x = r.xMax + 4;
+            }
             if (_nav.Mode != MatterportNavigator.ViewMode.Inside && space.FloorCount > 1)
             {
                 x += 16;
@@ -120,7 +129,7 @@ namespace Matterportable
 
         void DrawHints()
         {
-            const string hint = "Drag to look · Click to move · W A S D step · ←/→ turn · Wheel zoom · 1/2/3 Inside/Dollhouse/Floor plan · " +
+            const string hint = "Drag to look · Click to move · W A S D step · ←/→ turn · Wheel zoom · 1/2/3 Inside/Dollhouse/Floor plan · M measure · " +
                                 "[ ] prev/next · P tour · F1 stats · F2 render view · F3 labels · H hide";
             var size = MpGui.Small.CalcSize(new GUIContent(hint));
             float w = Mathf.Min(size.x + 24, Screen.width - 24);

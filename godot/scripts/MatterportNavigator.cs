@@ -25,6 +25,11 @@ namespace Matterportable
         public bool IsChangingMode => _anim.Active;
         public bool IsWaitingForPanorama => _pending >= 0;
         public bool AutoTour { get; set; }
+        /// <summary>Takes over left clicks (measure mode): return true to consume the click. Also hides the sweep
+        /// markers and the move cursor while set.</summary>
+        public Func<Vector2, bool> ClickHandler;
+        /// <summary>World height above which geometry is hidden in the current view (floor filter), else +infinity.</summary>
+        public float ViewClipHeight => Mode != ViewMode.Inside && !(_anim.Active && _anim.Target == ViewMode.Inside) ? ClipHeight() : float.PositiveInfinity;
         public event Action<int> ArrivedAtSweep;
 
         ViewerSettings S => Space.Settings;
@@ -226,7 +231,7 @@ namespace Matterportable
 
         void Click(Vector2 mouse)
         {
-            if (_anim.Active) return;
+            if (_anim.Active || (ClickHandler != null && ClickHandler(mouse))) return;
             var origin = ProjectRayOrigin(mouse);
             var dir = ProjectRayNormal(mouse);
             int target = Mode == ViewMode.Inside ? PickInside(origin, dir) : PickFromAbove(origin, dir);
@@ -542,8 +547,7 @@ namespace Matterportable
                 blend = t * t * (3f - 2f * t);
             }
             else if (_anim.Active) a = _anim.Sweep;
-            bool clipping = Mode != ViewMode.Inside && !(_anim.Active && _anim.Target == ViewMode.Inside);
-            Space.SetView(a, b, blend, _projection, clipping ? ClipHeight() : float.PositiveInfinity);
+            Space.SetView(a, b, blend, _projection, ViewClipHeight);
         }
 
         // ------------------------------------------------------------------ hover, markers, cursor
@@ -552,7 +556,7 @@ namespace Matterportable
         {
             HoverSweep = -1;
             _reticle = false;
-            if (_anim.Active || _dragging) return;
+            if (_anim.Active || _dragging || ClickHandler != null) return;
             var vp = GetViewport();
             var mouse = vp.GetMousePosition();
             if (!vp.GetVisibleRect().HasPoint(mouse) || vp.GuiGetHoveredControl() != null) return;
@@ -585,7 +589,7 @@ namespace Matterportable
         void DrawMarkers()
         {
             var s = S;
-            if (s.ShowMarkers && !_anim.Active)
+            if (s.ShowMarkers && !_anim.Active && ClickHandler == null)
             {
                 if (Mode == ViewMode.Inside)
                 {

@@ -33,9 +33,14 @@ namespace Matterportable
         public bool AutoTour { get; set; }
         /// <summary>
         /// Screen rectangles (GUI coordinates, y down) where clicks belong to UI. Filled while UI draws
-        /// (<see cref="MpGui.Block"/>), consumed and cleared by the next Update.
+        /// (<see cref="MpGui.Block"/>), read by the next frame's Updates and cleared in LateUpdate.
         /// </summary>
         public readonly List<Rect> BlockedGuiRects = new List<Rect>();
+        /// <summary>Takes over left clicks (measure mode): return true to consume the click. Also hides the sweep
+        /// markers and the move cursor while set.</summary>
+        public Func<Vector2, bool> ClickHandler;
+        /// <summary>World height above which geometry is hidden in the current view (floor filter), else +infinity.</summary>
+        public float ViewClipHeight => _mode != ViewMode.Inside && !(_anim.Active && _anim.Target == ViewMode.Inside) ? ClipHeight() : float.PositiveInfinity;
 
         public event Action<int> ArrivedAtSweep;
         public event Action<ViewMode> ModeChanged;
@@ -194,11 +199,7 @@ namespace Matterportable
                 space = FindSpace();
                 if (space != null) space.Loaded += OnSpaceLoaded;
             }
-            if (!Ready)
-            {
-                BlockedGuiRects.Clear();
-                return;
-            }
+            if (!Ready) return;
             if (!_initialised) OnSpaceLoaded(space);
             NavInput.BeginFrame();
             float dt = Time.unscaledDeltaTime;
@@ -213,8 +214,9 @@ namespace Matterportable
             UpdateTour();
             PushView();
             DrawMarkers();
-            BlockedGuiRects.Clear();
         }
+
+        void LateUpdate() => BlockedGuiRects.Clear();
 
         void HandleKeys(float dt)
         {
@@ -259,7 +261,7 @@ namespace Matterportable
             for (int b = 0; b < 3; b++)
             {
                 if (_pointerDown || !NavInput.ButtonDown(b)) continue;
-                if (OverHud(mouse)) continue;
+                if (IsOverUi(mouse)) continue;
                 _pointerDown = true;
                 _pointerButton = b;
                 _pressPos = mouse;
@@ -279,14 +281,15 @@ namespace Matterportable
             }
 
             float scroll = NavInput.Scroll;
-            if (Mathf.Abs(scroll) > 0.001f && !OverHud(mouse))
+            if (Mathf.Abs(scroll) > 0.001f && !IsOverUi(mouse))
             {
                 if (_mode == ViewMode.Inside) _targetFov = Mathf.Clamp(_targetFov - scroll * S.zoomStep, S.minFov, S.maxFov);
                 else _orbitDistanceGoal = Mathf.Clamp(_orbitDistanceGoal * Mathf.Exp(-scroll * 0.15f), 1.5f, 500f);
             }
         }
 
-        bool OverHud(Vector2 mouse)
+        /// <summary>True when the mouse (screen coordinates, y up) is over UI that registered itself with MpGui.Block.</summary>
+        public bool IsOverUi(Vector2 mouse)
         {
             var gui = new Vector2(mouse.x, Screen.height - mouse.y);
             foreach (var r in BlockedGuiRects) if (r.Contains(gui)) return true;
@@ -326,7 +329,7 @@ namespace Matterportable
 
         void Click(Vector2 mouse)
         {
-            if (_anim.Active) return;
+            if (_anim.Active || (ClickHandler != null && ClickHandler(mouse))) return;
             var ray = _cam.ScreenPointToRay(mouse);
             int target = _mode == ViewMode.Inside ? PickInside(ray) : PickFromAbove(ray, mouse);
             if (target >= 0) GoTo(target);
@@ -673,8 +676,7 @@ namespace Matterportable
             {
                 a = _anim.Sweep;
             }
-            bool clipping = _mode != ViewMode.Inside && !(_anim.Active && _anim.Target == ViewMode.Inside);
-            space.SetView(a, b, blend, _projection, clipping ? ClipHeight() : float.PositiveInfinity);
+            space.SetView(a, b, blend, _projection, ViewClipHeight);
         }
 
         // ------------------------------------------------------------------ hover, markers, cursor
@@ -683,7 +685,7 @@ namespace Matterportable
         {
             HoverSweep = -1;
             _reticle = false;
-            if (!enableMouse || _anim.Active || _dragging || OverHud(NavInput.MousePosition)) return;
+            if (!enableMouse || _anim.Active || _dragging || ClickHandler != null || IsOverUi(NavInput.MousePosition)) return;
             var mouse = NavInput.MousePosition;
             if (mouse.x < 0 || mouse.y < 0 || mouse.x > Screen.width || mouse.y > Screen.height) return;
             var ray = _cam.ScreenPointToRay(mouse);
@@ -722,7 +724,7 @@ namespace Matterportable
         {
             if (_markers == null) return;
             var s = S;
-            if (s.showMarkers && !_anim.Active)
+            if (s.showMarkers && !_anim.Active && ClickHandler == null)
             {
                 if (_mode == ViewMode.Inside)
                 {

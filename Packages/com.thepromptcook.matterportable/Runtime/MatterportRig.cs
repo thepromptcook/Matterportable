@@ -3,7 +3,7 @@ using UnityEngine;
 namespace Matterportable
 {
     /// <summary>
-    /// A space plus the camera that explores it (navigator + HUD). The one place rigs are built: used by the in-game
+    /// A space plus the camera that explores it (navigator, measure tool, HUD). The one place rigs are built: used by the in-game
     /// launcher, the editor scene builder and the PlayMode test.
     /// </summary>
     public sealed class MatterportRig
@@ -36,6 +36,7 @@ namespace Matterportable
             camGo.AddComponent<AudioListener>();
             var nav = camGo.AddComponent<MatterportNavigator>();
             nav.space = space;
+            camGo.AddComponent<MatterportMeasure>();
             camGo.AddComponent<MatterportHud>();
 
             if (!Application.isPlaying)

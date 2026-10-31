@@ -20,7 +20,7 @@ Make every round count: verify thoroughly here, and ask the user for exactly the
 ### Seeing the Godot version run
 
 ```bash
-tools/godot-check.sh                 # demo house: Inside (after a move 0 → 1) + Dollhouse screenshots, fails on any engine/script/shader error
+tools/godot-check.sh                 # demo house: Inside (after a move 0 → 1), Dollhouse and Measure screenshots, fails on any engine/script/shader error
 ```
 
 ```bash
@@ -28,7 +28,8 @@ tools/godot-check.sh --sweep 5 --view 2   # another sweep; F2 render view 2 = pa
 ```
 
 The Godot launcher also takes these arguments after `--`: `--open <link|demo>`, `--sweep N`,
-`--mode inside|dollhouse|floorplan`, `--view N`, `--goto N` (a real transition; the screenshot waits until it
+`--mode inside|dollhouse|floorplan`, `--view N`, `--measure` (places a two-segment line with real clicks, sends a
+real Escape, starts another line; the log then says "1 measurement(s), drawing yes, menu closed"), `--goto N` (a real transition; the screenshot waits until it
 finishes), `--screenshot file.png` (it quits after saving). Use them to
 reproduce a bug in a single run. The demo's panoramas are rendered from the synthetic house, so at a sweep the
 projection must line up exactly. Isolate a problem with views 1 (mesh texture), 2 (panorama) and 3 (visibility).
@@ -78,6 +79,8 @@ tools/check.sh
 | Inspector, editor downloads, Tools menu | `Editor/MatterportSpaceEditor.cs`, `Editor/MatterportEditorTools.cs` |
 | Images slow or hitching | `Runtime/Space/GpuTextures.cs` (async decode → GPU) used by `PanoramaCache` and `SpaceMesh` |
 | Project setup, URP, startup warnings | `Assets/Editor/MatterportProjectSetup.cs` |
+| Measure mode: clicks, snapping, Shift/Alt, units, labels, what shows where | Core `Runtime/Core/Measurement.cs` (`MeasureTool`, `MeshFeatures`) + `Tests/Core/MeasurementTests.cs`; drawing and panel in `Navigation/MatterportMeasure.cs` (Unity) and `godot/scripts/MatterportMeasure.cs` |
+| Clicks go through UI, or Escape opens the menu while measuring | `MpGui.Block` / `BlockedGuiRects` (cleared in the navigator's `LateUpdate`), `MatterportMeasure.OwnsEscape`; Godot: `SetInputAsHandled` in `MatterportMeasure._UnhandledInput` |
 | Godot: anything above | same name under `godot/scripts/` (see the table in CLAUDE.md); shaders in `godot/shaders/` |
 | Godot: "missing dependencies: Launcher.cs" | the user opened it with the standard (non-.NET) Godot; `main.gd` now says so on screen |
 | Godot: "dotnet not found", C# build, project won't open | `godot/Matterportable.csproj` (SDK 4.4.0, links Core), `project.godot` (`dotnet/project/assembly_name`) |

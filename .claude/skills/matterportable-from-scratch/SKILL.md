@@ -19,6 +19,13 @@ records the decisions behind it and the order that worked.
   - drag to look (the point under the cursor stays put), wheel zooms
   - Dollhouse and Floor plan views with floor filtering
 - **Look:** as photoreal as Matterport, meaning the original 360° photos at each sweep.
+- **Measure mode,** as close to Matterport's as possible (rules in `matterportable-dev/matterport-formats.md`):
+  - clicks place points, with continuous lines on by default
+  - Esc or Confirm ends a line; Esc again exits
+  - snapping to corners, edges and existing points; Shift locks to an axis, Alt disables snapping
+  - ft/in or metric labels
+  - floor-plan lines are 2D and shown only in floor plan
+  - measurements are temporary
 - **Iteration:**
   - cached, resumable downloads
   - Play from any sweep, live-tunable settings, F1 stats and F2 shader debug views
@@ -63,7 +70,8 @@ Core (pure C#)
 Unity runtime
   MatterportSpace (load coroutine; worker threads for decode/BVH; geometry reused across Play sessions)
     ─ SpaceMesh ─ SpaceRenderer (shader globals) ─ PanoramaCache ─ GpuTextures (async decode → GPU blit + mips)
-  MatterportNavigator (+ NavInput, SweepMarkers) · MatterportLauncher (start menu) · MatterportHud · MatterportRig
+  MatterportNavigator (+ NavInput, SweepMarkers) · MatterportMeasure · MatterportLauncher (start menu) · MatterportHud · MatterportRig
+Core MeasureTool (state machine + snapping + draw list) is shared; each engine only feeds rays and draws the list
 Editor: inspector (download with progress, preview, sweep list, Play-from-sweep, alignment fixes, Copy Diagnostics)
         + MatterportEditorTools (Tools menu: browser-export import/script, cache folder)
 Project: Assets/Editor/MatterportProjectSetup.cs (URP + Input System + fast Enter Play Mode + Launcher scene)
@@ -124,12 +132,29 @@ Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; sc
   - Report the score and margin. A failed solve is stored as `unsolved` and not retried on every load.
 - **Coordinate frames:** Unity is left-handed Y-up; Matterport is right-handed Z-up, so swap y and z. That mirror
   flips handedness, and therefore winding. Image rows are bottom-up everywhere.
+- **Measurement:**
+  - **Snapping:** mesh features are welded crease/boundary edges (unsigned normal angle > 40°) plus corners (3 or
+    more feature edges, or 2 at an angle) in a 0.5 m grid. The tolerance is 14 px converted to metres at the hit
+    distance. Priority: existing points, then corners, then edges.
+  - **Shift:** picks the axis (room walls from the area-weighted mean of 4×wall-normal-angle, or vertical) nearest
+    the drag direction, and takes the point on that axis line nearest the pointer ray.
+  - **Visibility:** outside Inside view, picks and occlusion skip back faces and geometry above the clip height,
+    matching what the user sees.
+  - **Drawing:** in screen space: hidden pieces faded, white lines with shadows, white pill labels per segment, a +
+    cursor with a ring when snapped.
 - **Transitions:** move the camera linearly with an ease curve, cross-fade with smoothstep(0.1–0.9), and preload
   the target panorama (small tier first). Mode changes fly between poses, fading projection out early when
   leaving a sweep and in late when arriving.
 
 ## Pitfalls already hit (don't repeat them)
 
+- **Measure mode:**
+  - Unity IMGUI has no line primitive; draw rotated thin textures (`GUIUtility.RotateAroundPivot`).
+  - Two components reading IMGUI block rectangles need the list cleared in `LateUpdate`, not in one reader's
+    `Update`.
+  - Escape is shared with the launcher's menu: make the measure tool own it while open.
+  - Godot's `Input.ParseInputEvent` is delivered on a later frame, so script multi-step input checks across frames.
+  - A C# local function can't capture a `ref` parameter; copy it to a local first.
 - **Godot:**
   - It needs its **.NET build** and `dotnet` on PATH; otherwise it crashes on start ("Failed to load hostfxr").
   - Opening the project **rewrites the csproj SDK version** to the editor's version, so commit an old one (4.4.0)

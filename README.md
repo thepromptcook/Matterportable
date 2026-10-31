@@ -4,18 +4,19 @@ Turn a Matterport link into a navigable, photoreal environment in **Unity** or *
 
 Paste `https://discover.matterport.com/space/rGMMnZDh3Tf` (or any Matterport link or model ID), press Play, and walk
 the space the way Matterport does. Click to move between 360° capture points (sweeps) with the same cross-fading
-transition, drag to look around, step with W/A/S/D, and switch to Dollhouse or Floor plan views.
+transition, drag to look around, step with W/A/S/D, switch to Dollhouse or Floor plan views, and measure anything
+with Matterport's measurement tool.
 
 > **Status.** It works on a real space ("359 N Ridgewood Pl", 58 sweeps) in Unity 6000.5 with URP.
 >
 > **Verified on every change, without Unity:**
-> - 53 automated core tests. They run against a procedural house and a fake Matterport server, and cover downloads,
->   mesh decoding, coordinate frames and panorama alignment.
+> - Automated core tests. They run against a procedural house and a fake Matterport server, and cover downloads,
+>   mesh decoding, coordinate frames, panorama alignment and the measurement tool.
 > - Compile checks of all Unity code in the editor, player and Input System configurations.
 > - Shader HLSL compilation.
 >
 > - The Godot project is compiled, then run headless on the demo house with screenshots of the Inside and
->   Dollhouse views.
+>   Dollhouse views and of measure mode.
 >
 > A PlayMode test covers loading and navigation inside Unity.
 
@@ -81,6 +82,15 @@ https://github.com/thepromptcook/Matterportable.git?path=/Packages/com.theprompt
 | `[` · `]` · Home | Previous / next sweep · start sweep | |
 | P | Auto tour through all sweeps | |
 | F1 · F2 · F3 · H | Stats · render debug view · sweep labels · hide hints | |
+| M or **Measure** | Measure mode (see below) | Measure mode |
+
+**Measure mode** works like Matterport's: click to place points. With *Continuous lines* on (the default), each click
+adds a connected segment; **Esc** or **✓ Confirm** ends the line, and Esc again leaves measure mode. Points snap to
+corners, edges and other measurements. Hold **Shift** to lock the line to the nearest axis (the room's walls or
+vertical), or **Alt** to place points without snapping. Click a measurement (or its row in the panel) to select it,
+and press **Delete** or **✕** to remove it. The panel toggles *Snapping*, *Continuous lines* and feet/inches vs
+metres. Lines drawn in Floor plan are 2D and only show there. Measurements are temporary, as they are for Matterport
+visitors. While measuring, dragging still looks around and W/A/S/D still steps between sweeps.
 
 Every value (drag feel, transition speed, zoom limits, marker look, streaming budgets) lives in a
 **Matterport Viewer Settings** asset (*Create ▸ Matterportable ▸ Viewer Settings*). Assign it to the space;

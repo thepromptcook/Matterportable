@@ -17,7 +17,7 @@ The user tests in Unity and Godot and pastes back Console/Output text or a diagn
 tools/setup-dev.sh     # once per container: .NET 8 SDK, glslang, NuGet restore
 tools/check.sh         # every check (~20 s): core tests, Unity compile x3, CLI, browser script, shaders, metas, dead code
 tools/check.sh --fast  # core tests + scripts only
-tools/godot-check.sh   # Godot demo run → /tmp/matterportable-godot/{inside,dollhouse}.png (+ --sweep N, --view N)
+tools/godot-check.sh   # Godot demo runs → /tmp/matterportable-godot/{inside,dollhouse,measure}.png (+ --sweep N, --view N)
 dotnet test tools/Matterportable.Core.Tests --filter Alignment
 dotnet run --project tools/Matterportable.Cli -- help   # download / import / demo / info / align / diagnose / browser-script
 ```
@@ -33,7 +33,9 @@ Packages/com.thepromptcook.matterportable/
   Runtime/Space/       MatterportSpace (component: load lifecycle + queries), SpaceMesh (Unity mesh), SpaceRenderer
                        (shader globals), PanoramaCache (streaming), GpuTextures (async image → GPU),
                        CalibrationRunner, DemoSpace
-  Runtime/Navigation/  MatterportNavigator (camera, transitions, view modes), NavInput, SweepMarkers
+  Runtime/Core/Measurement.cs   MeasureTool (Matterport measure mode: snapping, axis lock, units, draw list),
+                       MeshFeatures (crease edges/corners, wall axes) - shared by both engines' measure UI
+  Runtime/Navigation/  MatterportNavigator (camera, transitions, view modes), MatterportMeasure, NavInput, SweepMarkers
   Runtime/UI/          MatterportLauncher (in-game start menu), MatterportHud, MpGui (shared styles)
   Runtime/             MatterportRig (space + camera), MatterportViewerSettings, Utilities
   Runtime/Resources/Matterportable/   shaders: Mesh (projection), Skybox, Marker, FaceBlit + MatterportCommon.hlsl
@@ -42,7 +44,7 @@ Packages/com.thepromptcook.matterportable/
   Tools~/browser-export.js   generated from the C# query (fallback exporter)
 Assets/Editor/MatterportProjectSetup.cs   project-level setup (URP, Input System, fast Enter Play Mode, Launcher scene)
 godot/                Godot 4 .NET project (Matterportable.csproj links Runtime/Core/**)
-  scripts/             MatterportSpace, PanoramaCache, MatterportNavigator, SweepMarkers, Launcher, Hud,
+  scripts/             MatterportSpace, PanoramaCache, MatterportNavigator, MatterportMeasure, SweepMarkers, Launcher, Hud,
                        ViewerSettings, GodotUtil (frame conversion, worker-thread image decode, cache path, demo)
   shaders/             matterport_common.gdshaderinc (port of MatterportCommon.hlsl), mesh, sky, marker
 tools/                CLI, test runner project, UnityCompileCheck (+ API stubs), check scripts, godot-check.sh
@@ -64,6 +66,7 @@ The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceD
   | `Space/PanoramaCache.cs` + `GpuTextures` | `scripts/PanoramaCache.cs` |
   | `Navigation/MatterportNavigator.cs` + `NavInput` | `scripts/MatterportNavigator.cs` |
   | `Navigation/SweepMarkers.cs` | `scripts/SweepMarkers.cs` |
+  | `Navigation/MatterportMeasure.cs` (IMGUI overlay + panel) | `scripts/MatterportMeasure.cs` (Control overlay + panel) |
   | `UI/MatterportLauncher.cs`, `UI/MatterportHud.cs` | `scripts/Launcher.cs`, `scripts/Hud.cs` |
   | `MatterportViewerSettings.cs` | `scripts/ViewerSettings.cs` |
   | `Resources/Matterportable/*.shader` + `MatterportCommon.hlsl` | `shaders/*.gdshader` + `matterport_common.gdshaderinc` |
@@ -112,6 +115,13 @@ The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceD
     calibration).
   - Anything else static must be reset with `[RuntimeInitializeOnLoadMethod(SubsystemRegistration)]` (see
     `NavInput`).
+- **Measurement** behaviour (clicks, Escape, snapping, axes, units, what shows in which view) lives only in Core
+  `MeasureTool`; the engine files just feed it the pointer ray and draw its `MeasureDrawList`. Change behaviour there,
+  with a test in `Tests/Core/MeasurementTests.cs`.
+- **Unity UI blocking:** IMGUI registers its rectangles with `MpGui.Block` while drawing. The next frame's Updates read
+  `BlockedGuiRects` (navigator and measure tool), and the navigator clears the list in `LateUpdate`. Escape belongs to
+  measure mode while it is open (`MatterportMeasure.OwnsEscape`), then to the launcher. In Godot, measure mode marks
+  Escape as handled.
 - **Godot shader values** are set per material every frame by `MatterportSpace.ApplyView` (no globals). The sky
   shader returns a flat colour in `AT_CUBEMAP_PASS`, so radiance updates stay cheap.
 - **Images load through `GpuTextures`** (UnityWebRequestTexture decode off the main thread, GPU blit and mips).
