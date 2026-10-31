@@ -24,8 +24,9 @@ transition, drag to look around, step with W/A/S/D, and switch to Dollhouse or F
 ## Quick start
 
 1. Open this folder in **Unity 6000.5.0f1** (2021.3 LTS or newer also works).
-2. On first open, click **Configure** in the *Matterportable project setup* dialog. It installs URP and the Input
-   System for your editor version, turns off deprecated settings, and restarts Unity once.
+2. On first open the project configures itself: it installs URP and the Input System for your editor version,
+   turns off deprecated settings, and asks to restart Unity once. If the Input System asks to enable its backends,
+   click **Yes**.
 3. The **Launcher** scene opens. Press **Play**.
 4. In the in-game menu, paste the link (or click **Paste**) and press **Open space**. The first visit downloads the
    space; after that it opens instantly from the **Downloaded spaces** list.

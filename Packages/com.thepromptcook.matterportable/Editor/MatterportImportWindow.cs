@@ -282,7 +282,9 @@ namespace Matterportable.Editor
 
         static void RefreshSpacesInScene(string modelId)
         {
-#if UNITY_2023_1_OR_NEWER
+#if UNITY_6000_5_OR_NEWER
+            var spaces = FindObjectsByType<MatterportSpace>();
+#elif UNITY_2023_1_OR_NEWER
             var spaces = FindObjectsByType<MatterportSpace>(FindObjectsSortMode.None);
 #else
             var spaces = FindObjectsOfType<MatterportSpace>();

@@ -60,14 +60,6 @@ static class MatterportProjectSetup
 
         if (needUrp || needInput)
         {
-            int choice = EditorUtility.DisplayDialogComplex("Matterportable project setup",
-                "Configure this project for Unity 6?\n\n• Install the Universal Render Pipeline and Input System packages\n" +
-                "• Create and assign a URP asset\n• Switch input handling to the Input System (Unity restarts once)\n" +
-                "• Turn off deprecated Dynamic Batching\n\nThis removes the deprecation warnings shown on startup.",
-                "Configure", "Not now", "Never for this project");
-            if (choice == 1) { OpenImporterOnce(); return; }
-            if (choice == 2) { EditorPrefs.SetBool(SkipKey + ProjectKey, true); OpenImporterOnce(); return; }
-
             var packages = new System.Collections.Generic.List<string>();
             if (needUrp) packages.Add("com.unity.render-pipelines.universal");
             if (needInput) packages.Add("com.unity.inputsystem");
@@ -199,26 +191,38 @@ static class MatterportProjectSetup
 
     static bool DynamicBatchingEnabled()
     {
-        var batching = PlayerSettingsObject()?.FindProperty("m_BuildTargetBatching");
-        if (batching == null || !batching.isArray) return false;
-        for (int i = 0; i < batching.arraySize; i++)
-        {
-            var d = batching.GetArrayElementAtIndex(i).FindPropertyRelative("m_DynamicBatching");
-            if (d != null && d.boolValue) return true;
-        }
+        var so = PlayerSettingsObject();
+        if (so == null) return false;
+        var it = so.GetIterator();
+        while (it.Next(true))
+            if (it.propertyType == SerializedPropertyType.Boolean && it.name.IndexOf("DynamicBatching", StringComparison.OrdinalIgnoreCase) >= 0 && it.boolValue)
+                return true;
         return false;
     }
 
     static void DisableDynamicBatching()
     {
+        // 1) Serialized player settings (per-platform batching entries).
         var so = PlayerSettingsObject();
-        var batching = so?.FindProperty("m_BuildTargetBatching");
-        if (batching == null || !batching.isArray) return;
-        for (int i = 0; i < batching.arraySize; i++)
+        if (so != null)
         {
-            var d = batching.GetArrayElementAtIndex(i).FindPropertyRelative("m_DynamicBatching");
-            if (d != null) d.boolValue = false;
+            var it = so.GetIterator();
+            while (it.Next(true))
+                if (it.propertyType == SerializedPropertyType.Boolean && it.name.IndexOf("DynamicBatching", StringComparison.OrdinalIgnoreCase) >= 0)
+                    it.boolValue = false;
+            so.ApplyModifiedPropertiesWithoutUndo();
         }
-        so.ApplyModifiedPropertiesWithoutUndo();
+        // 2) Editor API (internal in some versions) for every build target.
+        foreach (var m in typeof(PlayerSettings).GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+        {
+            var ps = m.GetParameters();
+            if (m.Name.IndexOf("DynamicBatching", StringComparison.OrdinalIgnoreCase) < 0 || !m.Name.StartsWith("Set") || ps.Length != 2 || ps[1].ParameterType != typeof(bool)) continue;
+            foreach (BuildTarget t in Enum.GetValues(typeof(BuildTarget)))
+            {
+                try { if (ps[0].ParameterType == typeof(BuildTarget)) m.Invoke(null, new object[] { t, false }); }
+                catch (Exception) { /* unsupported target */ }
+            }
+        }
+        AssetDatabase.SaveAssets();
     }
 }
