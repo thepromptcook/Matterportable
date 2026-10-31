@@ -56,6 +56,14 @@ else skip "shaders" "glslang-tools not installed"; fi
 if [[ $FAST == 0 ]] && [[ -x "${GODOT:-/opt/godot/godot}" ]] && command -v xvfb-run >/dev/null; then
   step "godot run (demo screenshots in /tmp/matterportable-godot)" tools/godot-check.sh
 else skip "godot run" "Godot or xvfb-run not installed"; fi
+godot_uids_committed() {
+  local missing=0
+  for f in $(git ls-files 'godot/*.cs' 'godot/*.gd' 'godot/*.gdshader' 'godot/*.gdshaderinc'); do
+    git ls-files --error-unmatch "$f.uid" >/dev/null 2>&1 || { echo "missing: $f.uid is not committed (run tools/godot-check.sh, then git add it)"; missing=1; }
+  done
+  return $missing
+}
+step "godot .uid files committed (else users' pulls fail)" godot_uids_committed
 step ".meta files" python3 tools/generate_metas.py --check
 step "no unused members" python3 tools/find_unused.py
 

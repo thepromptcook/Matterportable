@@ -168,6 +168,8 @@ Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; sc
   - Sky shaders run a radiance pass; return a flat colour when `AT_CUBEMAP_PASS`.
   - State set before a node's first-frame initialisation gets overwritten (`--mode` was lost); apply it at the end
     of initialisation.
+  - Commit each new script's `.uid` with the script. A missing one gets generated on the user's machine and then blocks
+    their next pull ("untracked files would be overwritten").
   - Put the project in a subfolder: at the repository root, Godot would scan Unity's `Library/`.
 
 - **Cloudflare blocks the viewer page from cloud containers.** The GraphQL endpoint works from the user's machine.

@@ -85,7 +85,7 @@ The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceD
 - **Keep the Console quiet.** Info messages go to `BufferLog` and `debug/load.log`, and reach the Console only
   with `verboseLogging`. Use warnings only for things the user should act on.
 - **Godot specifics.** Godot rewrites the csproj SDK version to the editor's version when it opens the project.
-  Keep `Godot.NET.Sdk/4.4.0` committed; `godot-check.sh` restores it. Commit Godot's `.uid` files. Godot needs
+  Keep `Godot.NET.Sdk/4.4.0` committed; `godot-check.sh` restores it. Commit Godot's `.uid` files in the same commit as the script: if the user's Godot generates one first, their pull fails with "untracked files would be overwritten" (`check.sh` enforces this). Godot needs
   `dotnet` on PATH.
 - **Never commit `MatterportCache/`.** It holds third-party content.
 - **Commits and pushes go to the session's feature branch.** Keep each commit focused.
