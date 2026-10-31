@@ -1,19 +1,37 @@
 ---
 name: matterportable-dev
-description: Use when changing, fixing or extending the Matterportable Unity package (Matterport link → navigable Unity environment) or when the user pastes Unity Console output, a diagnostics report or a screenshot from running it. Covers toolchain setup without Unity, where each behaviour lives, the verification loop and how to turn user reports into fixes.
+description: Use when changing, fixing or extending Matterportable (Matterport link → navigable environment in Unity and Godot 4, sharing one C# Core) or when the user pastes Unity Console / Godot Output text, a diagnostics report or a screenshot from running it. Covers toolchain setup without Unity, where each behaviour lives, the verification loop and how to turn user reports into fixes.
 ---
 
 # Working on Matterportable
 
-Claude can't run Unity or reach Matterport from a cloud container, so the loop is:
+Claude can't run Unity or reach Matterport from a cloud container, but **it can run the Godot project** headless.
+The loop is:
 
-1. Change the code.
-2. Run `tools/check.sh`.
+1. Change the code. If it's runtime behaviour, change both engines (table in CLAUDE.md).
+2. Run `tools/check.sh`. Then **look at** `/tmp/matterportable-godot/inside.png` and `dollhouse.png` with Read.
+   Rendering, projection and navigation bugs usually show there before the user ever sees them.
 3. Commit and push.
-4. The user pulls and tests in Unity 6000.5.
-5. The user pastes back Console output or diagnostics.
+4. The user pulls and tests in Unity 6000.5 and/or Godot 4 (.NET).
+5. The user pastes back Console/Output text or diagnostics.
 
 Make every round count: verify thoroughly here, and ask the user for exactly the evidence you need.
+
+### Seeing the Godot version run
+
+```bash
+tools/godot-check.sh                 # demo house: Inside (after a move 0 → 1) + Dollhouse screenshots, fails on any engine/script/shader error
+```
+
+```bash
+tools/godot-check.sh --sweep 5 --view 2   # another sweep; F2 render view 2 = panorama only (3 visibility, 4 weights)
+```
+
+The Godot launcher also takes these arguments after `--`: `--open <link|demo>`, `--sweep N`,
+`--mode inside|dollhouse|floorplan`, `--view N`, `--goto N` (a real transition; the screenshot waits until it
+finishes), `--screenshot file.png` (it quits after saving). Use them to
+reproduce a bug in a single run. The demo's panoramas are rendered from the synthetic house, so at a sweep the
+projection must line up exactly. Isolate a problem with views 1 (mesh texture), 2 (panorama) and 3 (visibility).
 
 ## 1. Set up (once per container)
 
@@ -36,6 +54,7 @@ tools/check.sh
 - a check that `Tools~/browser-export.js` matches the C# query
 - the browser exporter against a mock endpoint (node)
 - the shader HLSL through glslang
+- the Godot C# compile (`-warnaserror`) and the headless Godot demo run (`tools/godot-check.sh`)
 - `.meta` coverage
 - the dead-code scan (`tools/find_unused.py`)
 
@@ -59,6 +78,10 @@ tools/check.sh
 | Inspector, editor downloads, Tools menu | `Editor/MatterportSpaceEditor.cs`, `Editor/MatterportEditorTools.cs` |
 | Images slow or hitching | `Runtime/Space/GpuTextures.cs` (async decode → GPU) used by `PanoramaCache` and `SpaceMesh` |
 | Project setup, URP, startup warnings | `Assets/Editor/MatterportProjectSetup.cs` |
+| Godot: anything above | same name under `godot/scripts/` (see the table in CLAUDE.md); shaders in `godot/shaders/` |
+| Godot: "dotnet not found", C# build, project won't open | `godot/Matterportable.csproj` (SDK 4.4.0, links Core), `project.godot` (`dotnet/project/assembly_name`) |
+| Godot: colours washed out or dark | `source_color` hints on samplers; tonemap Linear in `MatterportSpace.CreateSky` |
+| Godot: upside-down or mirrored panoramas or textures | row-order flips in `GodotUtil` and `mp_pano_coords` (V flip), mesh UV `1 - v` |
 
 ## 3. Making a change
 
@@ -71,6 +94,16 @@ tools/check.sh
   - Prefer small, isolated edits.
   - Keep Unity-version differences in one helper (`MpUtil`).
 - **Shaders:** keep C# and HLSL math in sync (see CLAUDE.md conventions). `tools/check_shaders.py` compiles them.
+  The Godot port (`godot/shaders/matterport_common.gdshaderinc`) mirrors `MatterportCommon.hlsl` function for
+  function; change both. Godot shader errors only show up when Godot runs, so run `tools/godot-check.sh`.
+- **Godot code:** mirror the Unity file's structure and names, so a diff in one engine maps line by line onto the
+  other. Godot-isms:
+  - pointer input comes through `_UnhandledInput`, so UI controls consume their own clicks (no blocked-rect lists)
+  - `async`/`await` resumes on the main thread; use `Task.Run` for decode and `await ToSignal(GetTree(), "process_frame")`
+    to wait a frame
+  - the camera looks down -Z, and yaw is counter-clockwise
+  - set state that must survive a node's first-frame setup through a field it applies at the end of setup (like
+    `MatterportNavigator.StartMode`)
 - **New files:** run `python3 tools/generate_metas.py`. Move scripts with `git mv` of both the file and its `.meta`.
 - **Query changes:** regenerate `Tools~/browser-export.js`, and update the `FakeMatterport` schema.
 - **Deprecations:** the user sees Unity 6.5 deprecation warnings that the 2021 reference assemblies can't show.
@@ -111,8 +144,15 @@ Per frame, the main thread does:
 - up to about 20 marker draws
 - IMGUI (HUD and launcher)
 
+**Godot** has no fast-Enter-Play-Mode or static cache: each run is a fresh process, so the geometry (DAM decode, BVH,
+sweeps) is rebuilt on every run, on a worker thread. Panorama faces and mesh textures decode and build mipmaps on worker tasks;
+the main thread only creates `Texture2DArray`/`ImageTexture`. Depth cubes come from the same
+`CubeFaces.DepthCube` (Core) and upload one per frame.
+
 ## 4. Reading what the user sends
 
+- **Godot Output / Debugger ▸ Errors:** the same `[Matterportable]` lines (`GD.PushWarning` / `GD.PushError`).
+  Ask for the Errors tab text, and for `MatterportCache/<id>/debug/load.log`, which both engines write.
 - **Console lines** carry the first line plus a stack trace. The `[Matterportable]` prefix marks ours. Info lines
   only appear when `verboseLogging` is on, so warnings and errors are the signal.
 - **Diagnostics report** (inspector ▸ Copy Diagnostics, or `matterportable diagnose`): the manifest summary,
@@ -132,5 +172,5 @@ After learning a new fact about Matterport's data, record it in [matterport-form
 1. Run `tools/check.sh`.
 2. Commit with a message that says what changed for the user.
 3. Push to the session's branch.
-4. In the reply, tell the user what to pull and what to look for in Unity: which Console lines should change, or
-   which view to check.
+4. In the reply, tell the user what to pull and what to look for in Unity and Godot: which Console/Output lines
+   should change, or which view to check.

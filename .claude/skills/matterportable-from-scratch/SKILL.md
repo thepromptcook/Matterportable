@@ -1,6 +1,6 @@
 ---
 name: matterportable-from-scratch
-description: Blueprint for building a Matterport-link-to-Unity viewer like Matterportable from an empty repository - requirements, architecture, build order with acceptance checks, key algorithms and the pitfalls already hit. Use when asked to recreate, port or substantially redesign the project, or to start a similar "scan/panorama tour → Unity" importer.
+description: Blueprint for building a Matterport-link-to-Unity/Godot viewer like Matterportable from an empty repository - requirements, architecture, build order with acceptance checks, key algorithms and the pitfalls already hit. Use when asked to recreate, port or substantially redesign the project, or to start a similar "scan/panorama tour → Unity" importer.
 ---
 
 # Rebuilding Matterportable from scratch
@@ -26,6 +26,8 @@ records the decisions behind it and the order that worked.
   - tests that run without Unity
 - **Target:** Unity 6000.5 on Windows with URP and the Input System. The project must open with a clean Console
   and no deprecation warnings, but the package should also run on 2021.3+ and the Built-in pipeline.
+- **Second engine:** Godot 4 (.NET build) on Windows, working "the same way from the same links". It is imported
+  with *Import Existing Project* from `godot/project.godot`.
 
 ## Constraints that shape the design
 
@@ -65,6 +67,9 @@ Unity runtime
 Editor: inspector (download with progress, preview, sweep list, Play-from-sweep, alignment fixes, Copy Diagnostics)
         + MatterportEditorTools (Tools menu: browser-export import/script, cache folder)
 Project: Assets/Editor/MatterportProjectSetup.cs (URP + Input System + fast Enter Play Mode + Launcher scene)
+Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; scripts/ mirror the Unity runtime file
+  by file (MatterportSpace = space + mesh + renderer, PanoramaCache, MatterportNavigator, SweepMarkers, Launcher,
+  Hud, ViewerSettings, GodotUtil); shaders/ are ports of the HLSL. Same cache folder, so one download serves both.
 ```
 
 ## Build order (each step has a check before moving on)
@@ -92,7 +97,12 @@ Project: Assets/Editor/MatterportProjectSetup.cs (URP + Input System + fast Ente
    - Check: the editor, player and Input System compile configurations all pass.
 8. **Editor and project:** inspector, editor tools, setup script, `.meta` generation, PlayMode test.
    - Check: `tools/check.sh` is all green.
-9. **Real data with the user:** expect two or three round trips (schema field names, UV location, winding).
+9. **Godot port** (after Unity works, or in parallel once the Core is done):
+   - Create the .NET project linking the Core, then port the runtime file by file and the shaders function by
+     function.
+   - Check: `dotnet build` against `Godot.NET.Sdk` from NuGet, then `tools/godot-check.sh`. That runs Godot headless
+     under xvfb with OpenGL/llvmpipe and saves Inside and Dollhouse screenshots; read them.
+10. **Real data with the user:** expect two or three round trips (schema field names, UV location, winding).
    Record the facts in `matterportable-dev/matterport-formats.md`.
 
 ## Algorithms worth getting right
@@ -119,6 +129,21 @@ Project: Assets/Editor/MatterportProjectSetup.cs (URP + Input System + fast Ente
   leaving a sweep and in late when arriving.
 
 ## Pitfalls already hit (don't repeat them)
+
+- **Godot:**
+  - It needs its **.NET build** and `dotnet` on PATH; otherwise it crashes on start ("Failed to load hostfxr").
+  - Opening the project **rewrites the csproj SDK version** to the editor's version, so commit an old one (4.4.0)
+    and restore it after headless runs.
+  - **Winding:** mirroring Z for Godot's right-handed frame made Core's triangle order front-facing as it is.
+    Reversing it "to be safe" turned the dollhouse inside out (you saw the roof). Check culling with a dollhouse
+    screenshot.
+  - **Rows:** Godot images are top-down while Core and Unity are bottom-up. Flip in the luma loader, flip V in the
+    shader for file-backed textures, and use `1 - v` for mesh UVs, but not for depth data written by C#.
+  - Use `source_color` on photo samplers and the Linear tonemapper, so photos aren't washed out.
+  - Sky shaders run a radiance pass; return a flat colour when `AT_CUBEMAP_PASS`.
+  - State set before a node's first-frame initialisation gets overwritten (`--mode` was lost); apply it at the end
+    of initialisation.
+  - Put the project in a subfolder: at the repository root, Godot would scan Unity's `Library/`.
 
 - **Cloudflare blocks the viewer page from cloud containers.** The GraphQL endpoint works from the user's machine.
   Provide a browser-console export as a fallback instead of any bypass.

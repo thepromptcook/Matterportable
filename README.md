@@ -1,6 +1,6 @@
 # Matterportable
 
-Turn a Matterport link into a navigable, photoreal environment in Unity.
+Turn a Matterport link into a navigable, photoreal environment in **Unity** or **Godot 4**.
 
 Paste `https://discover.matterport.com/space/rGMMnZDh3Tf` (or any Matterport link or model ID), press Play, and walk
 the space the way Matterport does. Click to move between 360° capture points (sweeps) with the same cross-fading
@@ -13,6 +13,9 @@ transition, drag to look around, step with W/A/S/D, and switch to Dollhouse or F
 >   mesh decoding, coordinate frames and panorama alignment.
 > - Compile checks of all Unity code in the editor, player and Input System configurations.
 > - Shader HLSL compilation.
+>
+> - The Godot project is compiled, then run headless on the demo house with screenshots of the Inside and
+>   Dollhouse views.
 >
 > A PlayMode test covers loading and navigation inside Unity.
 
@@ -38,6 +41,21 @@ in `<project>/MatterportCache/<model id>/`, outside `Assets`, so Unity never imp
 **In the editor:** *GameObject ▸ Matterportable ▸ Matterport Space + Camera* adds a space to any scene. Its inspector
 downloads, previews, aligns and diagnoses the space in Edit mode, and *Tools ▸ Matterportable* has the browser-export
 fallback.
+
+## Quick start (Godot 4)
+
+Both engines share one C# core: links, downloads, the cache folder, mesh decoding and panorama alignment. They
+behave the same way.
+
+1. Install the **.NET build of Godot 4.4 or newer** (the download labelled ".NET" on godotengine.org; the standard
+   build can't run C#) and the **.NET 8 SDK** (https://dotnet.microsoft.com/download).
+2. In the Godot Project Manager, click **Import**, browse to this repository's **`godot`** folder and select
+   `godot/project.godot`. Then click **Import & Edit**. (Don't pick the repository root: that's the Unity project.)
+3. Press **Run Project** (F5). Godot builds the C# on the first run.
+4. The same menu appears: paste a link and press **Open space**, or try the offline demo.
+
+Spaces download to the same `MatterportCache/` folder Unity uses, so a space downloaded in one engine opens instantly in
+the other. The controls are the same as in Unity; Esc returns to the menu.
 
 ### Use it in your own project
 
@@ -157,7 +175,9 @@ Packages/com.thepromptcook.matterportable/   the Unity package
   Tests/               Core (dotnet + Unity) · Editor (EditMode) · PlayMode
   Tools~/              browser-export.js (fallback exporter)
 Assets/Editor/         project setup (URP, Input System, Launcher scene)
-tools/                 check.sh, setup-dev.sh, CLI, test runner, Unity compile check, shader/meta/browser checks
+godot/                 the Godot 4 (.NET) project: compiles Runtime/Core directly, plus Godot versions of the space,
+                       panorama cache, navigator, HUD, launcher (scripts/) and shaders (shaders/)
+tools/                 check.sh, setup-dev.sh, godot-check.sh, CLI, test runner, Unity compile check, other checks
 CLAUDE.md, .claude/skills/   notes and skills that make future work with Claude Code faster
 ```
 
@@ -171,15 +191,17 @@ tools/setup-dev.sh
 tools/check.sh
 ```
 
-`setup-dev.sh` prepares a machine once: .NET 8 SDK, glslang and Unity reference assemblies. `check.sh` runs every
-check in about 20 seconds:
+`setup-dev.sh` prepares a machine once: .NET 8 SDK, glslang, Unity reference assemblies and a headless Godot.
+`check.sh` runs every check in under a minute:
 - the core tests
 - Unity compile checks in editor, player and Input System configurations
 - the CLI build
 - that the browser script matches the query
 - the browser export test
 - the shader compile
+- the Godot compile, plus a headless Godot run of the demo that saves screenshots (`tools/godot-check.sh`)
 - `.meta` coverage
+- a dead-code scan
 
 The command-line tool works on spaces without Unity:
 
@@ -200,7 +222,10 @@ dotnet run --project tools/Matterportable.Cli -- diagnose MatterportCache/rGMMnZ
 ## Limitations
 
 - **Movement:** sweep-to-sweep only, like Matterport. There is no free walking, as requested.
-- **Render pipelines:** Built-in and URP are supported; HDRP is not.
+- **Render pipelines:** Built-in and URP are supported; HDRP is not. Godot: Forward+, Mobile and Compatibility.
+- **Godot editor tools:** the Godot version has the in-game menu, navigation and HUD. The Unity inspector tools
+  (alignment fixes, Copy Diagnostics) have no Godot equivalent yet; use the Unity inspector or the CLI `diagnose`
+  command, which work on the same cache folder.
 - **Platforms:** desktop is the target. Mobile and WebGL are untested (WebGL can't use the downloader).
 - **Mesh tiles:** streamed 3D-tile meshes aren't decoded yet.
 - **Tiled panoramas:** the importer handles tiled faces, but assumes tile rows count from the top of the face.

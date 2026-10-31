@@ -1,0 +1,25 @@
+; Matterportable for Godot 4 (.NET build). Import this folder in the Godot Project Manager.
+; The engine-agnostic Core is shared with the Unity package (see Matterportable.csproj).
+
+config_version=5
+
+[application]
+
+config/name="Matterportable"
+config/description="Turns a Matterport link into a navigable, photoreal environment."
+run/main_scene="res://Main.tscn"
+config/features=PackedStringArray("4.4", "C#", "Forward Plus")
+
+[display]
+
+window/size/viewport_width=1600
+window/size/viewport_height=900
+window/vsync/vsync_mode=1
+
+[dotnet]
+
+project/assembly_name="Matterportable"
+
+[rendering]
+
+anti_aliasing/quality/msaa_3d=1

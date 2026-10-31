@@ -121,29 +121,9 @@ namespace Matterportable
             var origin = _space.Sweeps[sweep].Position;
             Task.Run(() =>
             {
-                try { _depthResults.Enqueue((sweep, ComputeDepth(geo.Bvh, origin, size), size)); }
+                try { _depthResults.Enqueue((sweep, CubeFaces.DepthCube(geo.Bvh, origin, size), size)); }
                 catch (Exception ex) { Debug.LogException(ex); }
             });
-        }
-
-        /// <summary>
-        /// Distance from the sweep to the first surface per canonical (space-aligned) cube-face texel, as half floats
-        /// (converted here on the worker thread, ready to upload).
-        /// </summary>
-        public static ushort[] ComputeDepth(Bvh bvh, Vec3 origin, int size)
-        {
-            var data = new ushort[6 * size * size];
-            Parallel.For(0, 6 * size, row =>
-            {
-                int face = row / size, y = row % size;
-                int offset = face * size * size + y * size;
-                for (int x = 0; x < size; x++)
-                {
-                    var dir = CubeFaces.Direction(face, (x + 0.5f) / size, (y + 0.5f) / size).Normalized;
-                    data[offset + x] = HalfFloat.FromFloat(bvh.Raycast(origin, dir, 500f, out var hit) ? hit.Distance : 1000f);
-                }
-            });
-            return data;
         }
 
         public void Update()

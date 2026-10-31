@@ -85,6 +85,19 @@ namespace Matterportable.Tests
         }
 
         [Test]
+        public void DepthCubeMeasuresDistanceToFirstSurface()
+        {
+            // A floor 1.5 m below the sweep: straight down (-Y face centre) hits it, straight up (+Y) misses.
+            var floor = new[] { new Vec3(-50, -1.5f, -50), new Vec3(50, -1.5f, -50), new Vec3(50, -1.5f, 50), new Vec3(-50, -1.5f, 50) };
+            var bvh = new Bvh(floor, new[] { 0, 1, 2, 0, 2, 3 });
+            const int size = 8;
+            var depth = CubeFaces.DepthCube(bvh, Vec3.Zero, size);
+            int centre = (size / 2) * size + size / 2;
+            Assert.AreEqual(1.5f, HalfFloat.ToFloat(depth[3 * size * size + centre]), 0.1f);
+            Assert.AreEqual(1000f, HalfFloat.ToFloat(depth[2 * size * size + centre]), 1f);
+        }
+
+        [Test]
         public void QuaternionMatrixRoundTrip()
         {
             var rng = new Random(3);

@@ -1,0 +1,14 @@
+<Project Sdk="Godot.NET.Sdk/4.4.0">
+  <!-- Godot upgrades the SDK version above to the editor's version when it opens the project. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <RootNamespace>Matterportable</RootNamespace>
+    <Nullable>disable</Nullable>
+    <NoWarn>$(NoWarn);CS0649;CS0414</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The same engine-agnostic Core the Unity package uses: link parsing, downloader, DAM decoder, BVH, solver. -->
+    <Compile Include="../Packages/com.thepromptcook.matterportable/Runtime/Core/**/*.cs" Link="Core/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

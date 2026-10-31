@@ -1,0 +1,4 @@
+.godot/
+*.translation
+/android/
+*.csproj.old

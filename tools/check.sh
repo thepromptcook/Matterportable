@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs every check that works without Unity. Exit code 0 = all passed.
 #   tools/check.sh          everything
-#   tools/check.sh --fast   skip the Unity compile checks (core tests + scripts only)
+#   tools/check.sh --fast   skip the Unity compile checks and the Godot run (core tests + scripts only)
 # First time on a new machine/container: tools/setup-dev.sh
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -37,6 +37,7 @@ if [[ $FAST == 0 ]]; then
   step "unity compile: input system path" "$DOTNET" build tools/UnityCompileCheck -p:InputSystem=true
 fi
 step "cli build" "$DOTNET" build tools/Matterportable.Cli
+step "godot compile" "$DOTNET" build godot/Matterportable.csproj -warnaserror
 
 browser_script_up_to_date() {
   local tmp; tmp="$(mktemp)"
@@ -52,6 +53,9 @@ if command -v node >/dev/null; then step "browser export (node, mock endpoint)" 
 else skip "browser export" "node not installed"; fi
 if command -v glslangValidator >/dev/null; then step "shaders (glslang HLSL)" python3 tools/check_shaders.py
 else skip "shaders" "glslang-tools not installed"; fi
+if [[ $FAST == 0 ]] && [[ -x "${GODOT:-/opt/godot/godot}" ]] && command -v xvfb-run >/dev/null; then
+  step "godot run (demo screenshots in /tmp/matterportable-godot)" tools/godot-check.sh
+else skip "godot run" "Godot or xvfb-run not installed"; fi
 step ".meta files" python3 tools/generate_metas.py --check
 step "no unused members" python3 tools/find_unused.py
 

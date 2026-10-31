@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prepares a machine/container for working on this repo without Unity (idempotent):
-#   .NET 8 SDK (-> /opt/dotnet if missing), glslang-tools (shader checks), and a NuGet restore of the
-#   Unity reference assemblies used by tools/UnityCompileCheck. Then run tools/check.sh.
+#   .NET 8 SDK (-> /opt/dotnet if missing), glslang-tools (shader checks), Godot .NET + xvfb (headless Godot runs)
+#   and a NuGet restore of the Unity reference assemblies (tools/UnityCompileCheck) and the Godot SDK. Then run tools/check.sh.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -20,7 +20,19 @@ if ! command -v glslangValidator >/dev/null; then
     || echo "  could not install glslang-tools; shader checks will be skipped"
 fi
 
+GODOT_VERSION=4.7.2
+if [[ ! -x /opt/godot/godot ]]; then
+  echo "Installing Godot $GODOT_VERSION (.NET) to /opt/godot (headless runs of the Godot project)…"
+  name="Godot_v${GODOT_VERSION}-stable_mono_linux_x86_64"
+  curl -sSL -o /tmp/godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${name}.zip" &&
+    rm -rf /opt/godot && unzip -q /tmp/godot.zip -d /tmp/godot-unzip && mv "/tmp/godot-unzip/$name" /opt/godot &&
+    ln -s "/opt/godot/Godot_v${GODOT_VERSION}-stable_mono_linux.x86_64" /opt/godot/godot && rm -rf /tmp/godot.zip /tmp/godot-unzip \
+    || echo "  could not install Godot; the Godot run check will be skipped"
+fi
+command -v xvfb-run >/dev/null || (apt-get install -y -qq xvfb >/dev/null 2>&1 || echo "  xvfb-run missing; the Godot run check will be skipped")
+
 export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 "$DOTNET" restore tools/UnityCompileCheck >/dev/null
 "$DOTNET" restore tools/Matterportable.Core.Tests >/dev/null
+"$DOTNET" restore godot/Matterportable.csproj >/dev/null
 echo "Ready. Run: tools/check.sh   (add /opt/dotnet to PATH if dotnet is not found)"

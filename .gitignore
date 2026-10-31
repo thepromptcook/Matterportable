@@ -9,6 +9,7 @@
 /[Mm]emoryCaptures/
 /[Rr]ecordings/
 *.csproj
+!/godot/*.csproj
 *.sln
 *.suo
 *.user

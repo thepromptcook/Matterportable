@@ -105,6 +105,27 @@ namespace Matterportable.Core
         public static Vec3 Direction(int c, float s, float t) => Canonical[c].Direction(s, t);
 
         /// <summary>
+        /// Occlusion depth cube for a sweep: distance to the first surface per canonical (space-aligned) face texel,
+        /// as half floats in face-major, bottom-up row order, ready to upload (Unity RHalf / Godot Rh texture arrays).
+        /// Runs in parallel; call it from a worker thread.
+        /// </summary>
+        public static ushort[] DepthCube(Bvh bvh, Vec3 origin, int size)
+        {
+            var data = new ushort[6 * size * size];
+            System.Threading.Tasks.Parallel.For(0, 6 * size, row =>
+            {
+                int face = row / size, y = row % size;
+                int offset = face * size * size + y * size;
+                for (int x = 0; x < size; x++)
+                {
+                    var dir = Direction(face, (x + 0.5f) / size, (y + 0.5f) / size).Normalized;
+                    data[offset + x] = HalfFloat.FromFloat(bvh.Raycast(origin, dir, 500f, out var hit) ? hit.Distance : 1000f);
+                }
+            });
+            return data;
+        }
+
+        /// <summary>
         /// Converts a layout (basis per source image) into the per-canonical-face lookup used by shaders:
         /// for canonical face c, which source image to sample and which axes map to its s/t.
         /// Returns false if the layout does not cover all six directions.

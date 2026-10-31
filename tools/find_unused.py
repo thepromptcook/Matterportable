@@ -15,6 +15,7 @@ ALLOWED = {
     "MpConvert",        # extension-method container (members are used)
     "LogExtensions",    # extension-method container (members are used)
     "LookAt",           # public camera API for user scripts
+    "_ExitTree",        # Godot callback
 }
 
 DECL = re.compile(r"(?:public|internal)\s+(?:static\s+|readonly\s+|override\s+|sealed\s+|const\s+|event\s+)*"
