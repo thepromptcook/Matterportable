@@ -23,19 +23,22 @@ transition, drag to look around, step with W/A/S/D, and switch to Dollhouse or F
 
 ## Quick start
 
-1. Open this folder as a project in **Unity 6000.5.0f1** (2021.3 LTS or newer also works; Built-in or URP).
-2. **Window ▸ Matterportable ▸ Import Space**.
-3. Paste the link, keep **Panorama quality: High (2048 px)**, then click **Download & Create Scene**.
-4. Press **Play**.
+1. Open this folder in **Unity 6000.5.0f1** (2021.3 LTS or newer also works).
+2. On first open, click **Configure** in the *Matterportable project setup* dialog. It installs URP and the Input
+   System for your editor version, turns off deprecated settings, and restarts Unity once.
+3. The **Launcher** scene opens. Press **Play**.
+4. In the in-game menu, paste the link (or click **Paste**) and press **Open space**. The first visit downloads the
+   space; after that it opens instantly from the **Downloaded spaces** list.
+5. Press **Esc** or **☰ Menu** to go back and open another space.
 
-The space is downloaded once into `<project>/MatterportCache/<model id>/` (outside `Assets`, so Unity never imports
-it). The panoramas are aligned automatically, and a scene with a camera rig is created in `Assets/Matterport/`.
+**No network?** Choose **Try the offline demo house** in the menu. It's a procedural house in Matterport's format,
+so you can check the whole pipeline offline.
 
-**No network, or just want to check your setup?** Click **Generate Demo Space** in the same window. You get a
-procedural house in exactly the same format, so you can try the whole pipeline offline.
+The menu appears automatically whenever you press Play in a scene without a Matterport Space. Downloads are cached
+in `<project>/MatterportCache/<model id>/`, outside `Assets`, so Unity never imports them.
 
-**Fastest loop:** add a **Matterport Space** component to any scene (*GameObject ▸ Matterportable ▸ Matterport
-Space + Camera*), paste a link into it and press Play. If the space isn't cached yet, it downloads automatically.
+The editor workflow is still available: *Window ▸ Matterportable ▸ Import Space* creates a dedicated scene per
+space, with sweep tools in the inspector. *Tools ▸ Matterportable ▸ Configure Project* re-runs the setup.
 
 ### Use it in your own project
 
