@@ -38,7 +38,9 @@ namespace Matterportable
             {
                 case LogLevel.Error: Debug.LogError("[Matterportable] " + message); break;
                 case LogLevel.Warning: Debug.LogWarning("[Matterportable] " + message); break;
-                default: if (Verbose) Debug.Log("[Matterportable] " + message); break;
+                default:
+                    if (Verbose) Debug.LogFormat(LogType.Log, LogOption.NoStacktrace, null, "{0}", "[Matterportable] " + message);
+                    break;
             }
         }
     }

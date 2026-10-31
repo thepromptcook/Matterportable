@@ -26,7 +26,7 @@ namespace Matterportable.Core
             Point("position"),
             Rotation("rotation"),
             new GqlField("resolutions"),
-            new GqlField("skyboxes").Leaves("id", "resolution", "status", "options", "urlTemplate",
+            new GqlField("skyboxes").Leaves("id", "resolution", "status", "urlTemplate",
                 "tileResolution", "tileCount", "tileUrlTemplate", "validUntil"));
 
         public static GqlDocument ModelQuery(string modelId)
@@ -39,7 +39,7 @@ namespace Matterportable.Core
                     new GqlField("meshes").Leaves("id", "status", "filename", "format", "resolution", "url", "validUntil"),
                     new GqlField("textures").Leaves("id", "status", "format", "resolution", "quality", "urlTemplate", "validUntil"),
                     new GqlField("tilesets").Leaves("status", "url", "urlTemplate", "validUntil", "tilesetVersion", "tilesetDepth", "tilesetPreset")),
-                new GqlField("floors").Leaves("id", "label", "sequence", "index"),
+                new GqlField("floors").Leaves("id", "label", "sequence"),
                 new GqlField("locations").Add(
                     new GqlField("id"),
                     new GqlField("index"),
@@ -48,8 +48,7 @@ namespace Matterportable.Core
                     new GqlField("floor").Leaves("id"),
                     new GqlField("room").Leaves("id"),
                     Point("position"),
-                    Pano("pano"),
-                    new GqlField("anchor").Add(new GqlField("id"), Point("position"), Pano("pano"))));
+                    Pano("pano")));
             return new GqlDocument("MatterportableModel", root);
         }
     }

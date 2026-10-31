@@ -56,7 +56,6 @@ namespace Matterportable.Tests
             var outcome = client.FetchModelAsync("DemoSpace01", CancellationToken.None).GetAwaiter().GetResult();
             Assert.IsTrue(outcome.Data["model"]["locations"].Count > 0);
             CollectionAssert.Contains(outcome.PrunedFields, "model/assets/tilesets");
-            CollectionAssert.Contains(outcome.PrunedFields, "model/locations/anchor");
             CollectionAssert.Contains(outcome.PrunedFields, "model/locations/position");
             CollectionAssert.DoesNotContain(outcome.PrunedFields, "model/locations/pano/skyboxes/urlTemplate");
             Assert.LessOrEqual(outcome.Attempts, 4, "errors for all fields of one round should be pruned together");

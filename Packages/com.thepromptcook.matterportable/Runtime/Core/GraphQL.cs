@@ -296,7 +296,6 @@ namespace Matterportable.Core
                         if (doc.TryRemove(f, out var path))
                         {
                             outcome.PrunedFields.Add(path);
-                            log.Info("GraphQL: field not available, dropping '" + path + "' (" + err.Message + ")");
                             removed++;
                             break;
                         }
