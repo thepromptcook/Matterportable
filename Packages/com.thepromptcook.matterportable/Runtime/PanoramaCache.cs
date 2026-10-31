@@ -32,7 +32,7 @@ namespace Matterportable
                                  (Depth == null ? 0 : (long)Depth.width * Depth.height * 2 * 6);
         }
 
-        struct Request
+        struct PendingLoad
         {
             public int Sweep;
             public PanoTier Tier;
@@ -41,7 +41,7 @@ namespace Matterportable
 
         readonly MatterportSpace _space;
         readonly Dictionary<int, Entry> _entries = new Dictionary<int, Entry>();
-        readonly List<Request> _queue = new List<Request>();
+        readonly List<PendingLoad> _queue = new List<PendingLoad>();
         readonly ConcurrentQueue<(int sweep, float[] depth, int size)> _depthResults = new ConcurrentQueue<(int, float[], int)>();
         readonly Material _blit;
         int _activeLoads;
@@ -106,7 +106,7 @@ namespace Matterportable
                 if (r.Tier.Size > tier.Size) tier = r.Tier;
                 priority = Mathf.Min(priority, r.Priority);
             }
-            _queue.Add(new Request { Sweep = sweep, Tier = tier, Priority = priority });
+            _queue.Add(new PendingLoad { Sweep = sweep, Tier = tier, Priority = priority });
         }
 
         /// <summary>Progressive request: smallest tier immediately, then the target size.</summary>

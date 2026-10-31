@@ -1,0 +1,10 @@
+{
+  "name": "com.thepromptcook.matterportable",
+  "version": "0.1.0",
+  "displayName": "Matterportable",
+  "description": "Turn a Matterport link into a navigable, photoreal Unity environment: downloads and caches the space (mesh, textures, 360° panoramas), aligns the panoramas automatically, and provides Matterport-style navigation (click / W A S D between sweeps, drag to look, dollhouse and floor plan views).",
+  "unity": "2021.3",
+  "keywords": ["matterport", "panorama", "360", "virtual tour", "scan", "digital twin"],
+  "author": { "name": "thepromptcook", "url": "https://github.com/thepromptcook/Matterportable" },
+  "dependencies": {}
+}

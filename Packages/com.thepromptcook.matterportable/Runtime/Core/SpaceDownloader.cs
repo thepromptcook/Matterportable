@@ -51,7 +51,7 @@ namespace Matterportable.Core
         }
 
         public override string ToString() =>
-            $"{Stage}: {FilesDone}/{FilesTotal} files, {FileUtil.FormatBytes(Bytes)}" + (FilesFailed > 0 ? $", {FilesFailed} failed" : "");
+            $"{Stage}: {FilesDone}/{FilesTotal} files, {IoUtil.FormatBytes(Bytes)}" + (FilesFailed > 0 ? $", {FilesFailed} failed" : "");
     }
 
     /// <summary>
@@ -274,7 +274,7 @@ namespace Matterportable.Core
             Status.SetStage("Done");
             Status.SetCurrent("");
             _log.Info($"Saved {manifest.Sweeps.Count} sweeps, {manifest.Textures.Count} textures, mesh: {(manifest.Mesh != null ? "yes" : "no")} " +
-                      $"→ {spaceDir} ({FileUtil.FormatBytes(FileUtil.DirectorySize(spaceDir))}).");
+                      $"→ {spaceDir} ({IoUtil.FormatBytes(IoUtil.DirectorySize(spaceDir))}).");
             return manifest;
         }
 
@@ -472,7 +472,7 @@ namespace Matterportable.Core
         async Task DownloadItemAsync(Item item, string spaceDir, DownloadOptions o, CancellationToken ct)
         {
             var path = CacheLayout.Resolve(spaceDir, item.RelPath);
-            if (!o.Overwrite && FileUtil.NonEmptyFileExists(path))
+            if (!o.Overwrite && IoUtil.NonEmptyFileExists(path))
             {
                 item.Ok = true;
                 Status.FileFinished(true, true);
@@ -517,7 +517,7 @@ namespace Matterportable.Core
         static void WriteDebug(string spaceDir, string name, string text)
         {
             if (text == null) return;
-            try { FileUtil.WriteAllTextAtomic(Path.Combine(spaceDir, CacheLayout.DebugDir, name), text); }
+            try { IoUtil.WriteAllTextAtomic(Path.Combine(spaceDir, CacheLayout.DebugDir, name), text); }
             catch (IOException) { /* diagnostics only */ }
         }
     }

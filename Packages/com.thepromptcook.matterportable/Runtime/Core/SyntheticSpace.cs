@@ -458,15 +458,15 @@ namespace Matterportable.Core
         {
             encode = encode ?? Png.Encode;
             Directory.CreateDirectory(spaceDir);
-            FileUtil.WriteAllBytesAtomic(CacheLayout.Resolve(spaceDir, Manifest.Mesh.File), DamWriter.Write(SourceMesh, Options.QuantizedMesh));
+            IoUtil.WriteAllBytesAtomic(CacheLayout.Resolve(spaceDir, Manifest.Mesh.File), DamWriter.Write(SourceMesh, Options.QuantizedMesh));
             foreach (var t in Manifest.Textures)
-                FileUtil.WriteAllBytesAtomic(CacheLayout.Resolve(spaceDir, t.File), Png.Encode(Textures[t.Material]));
+                IoUtil.WriteAllBytesAtomic(CacheLayout.Resolve(spaceDir, t.File), Png.Encode(Textures[t.Material]));
             for (int i = 0; i < Manifest.Sweeps.Count; i++)
             {
                 var entry = Manifest.Sweeps[i];
                 for (int k = 0; k < entry.Tiers.Count; k++)
                 for (int f = 0; f < 6; f++)
-                    FileUtil.WriteAllBytesAtomic(CacheLayout.Resolve(spaceDir, entry.Tiers[k].FacePath(f)), encode(Panoramas[i][k][f]));
+                    IoUtil.WriteAllBytesAtomic(CacheLayout.Resolve(spaceDir, entry.Tiers[k].FacePath(f)), encode(Panoramas[i][k][f]));
             }
             Manifest.Save(spaceDir);
             if (writeCalibration)

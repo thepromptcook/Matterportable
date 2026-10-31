@@ -220,7 +220,7 @@ namespace Matterportable.Core
         }
 
         public void Save(string spaceDir) =>
-            FileUtil.WriteAllTextAtomic(Path.Combine(spaceDir, FileName), ToJson().ToJson(true));
+            IoUtil.WriteAllTextAtomic(Path.Combine(spaceDir, FileName), ToJson().ToJson(true));
 
         public static SpaceManifest Load(string spaceDir)
         {
@@ -258,7 +258,7 @@ namespace Matterportable.Core
             Path.Combine(spaceDir, relative.Replace('/', Path.DirectorySeparatorChar));
     }
 
-    public static class FileUtil
+    public static class IoUtil
     {
         public static void WriteAllTextAtomic(string path, string text) => WriteAllBytesAtomic(path, new UTF8Encoding(false).GetBytes(text));
 

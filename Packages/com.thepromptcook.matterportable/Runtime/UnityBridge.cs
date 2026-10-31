@@ -117,7 +117,12 @@ namespace Matterportable
         public static string ResolveCacheRoot(string overrideFolder)
         {
             if (string.IsNullOrWhiteSpace(overrideFolder)) return DefaultCacheRoot;
+#if UNITY_EDITOR
             return Path.IsPathRooted(overrideFolder) ? overrideFolder : Path.GetFullPath(Path.Combine(ProjectRoot, overrideFolder));
+#else
+            // In players a custom editor folder is meaningless; spaces are bundled/downloaded to the default root.
+            return Path.IsPathRooted(overrideFolder) && Directory.Exists(overrideFolder) ? overrideFolder : DefaultCacheRoot;
+#endif
         }
 
         public static string SpaceDir(string overrideFolder, string modelId) =>

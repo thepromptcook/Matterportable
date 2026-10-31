@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Compile-checks the Unity-facing code without a Unity install, against UnityEngine/UnityEditor reference
+    assemblies from NuGet. Usage:
+      dotnet build tools/UnityCompileCheck                 (editor configuration, UNITY_EDITOR defined)
+      dotnet build tools/UnityCompileCheck -p:Player=true  (player configuration, runtime code only)
+    This only proves the code compiles against the Unity API; it does not run it.
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>8.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS0618;CS0414;CS0649;CS1701;CS1702</NoWarn>
+    <DefineConstants>UNITY_2017_1_OR_NEWER;UNITY_2019_1_OR_NEWER;UNITY_2020_1_OR_NEWER;UNITY_2020_2_OR_NEWER;UNITY_2021_1_OR_NEWER;ENABLE_LEGACY_INPUT_MANAGER;UNITY_STANDALONE</DefineConstants>
+    <DefineConstants Condition="'$(Player)' != 'true'">$(DefineConstants);UNITY_EDITOR</DefineConstants>
+    <Package>../../Packages/com.thepromptcook.matterportable</Package>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(Package)/Runtime/**/*.cs" />
+    <Compile Include="$(Package)/Editor/**/*.cs" Condition="'$(Player)' != 'true'" />
+    <Compile Include="$(Package)/Tests/Editor/**/*.cs" Condition="'$(Player)' != 'true'" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Unity3D.SDK" Version="2021.1.14.1" GeneratePathProperty="true" ExcludeAssets="all" />
+    <PackageReference Include="NUnit" Version="3.14.0" Condition="'$(Player)' != 'true'" />
+    <Reference Include="UnityEngine"><HintPath>$(PkgUnity3D_SDK)/lib/UnityEngine.dll</HintPath></Reference>
+    <Reference Include="UnityEditor" Condition="'$(Player)' != 'true'"><HintPath>$(PkgUnity3D_SDK)/lib/UnityEditor.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

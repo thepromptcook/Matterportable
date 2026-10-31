@@ -258,7 +258,7 @@ namespace Matterportable.Core
         }
 
         public void Save(string spaceDir) =>
-            FileUtil.WriteAllTextAtomic(System.IO.Path.Combine(spaceDir, FileName), ToJson().ToJson(true));
+            IoUtil.WriteAllTextAtomic(System.IO.Path.Combine(spaceDir, FileName), ToJson().ToJson(true));
 
         public static SpaceCalibration LoadOrDefault(string spaceDir)
         {
