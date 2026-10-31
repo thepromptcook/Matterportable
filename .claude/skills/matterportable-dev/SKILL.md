@@ -37,6 +37,7 @@ tools/check.sh
 - the browser exporter against a mock endpoint (node)
 - the shader HLSL through glslang
 - `.meta` coverage
+- the dead-code scan (`tools/find_unused.py`)
 
 ## 2. Where things live (symptom → code)
 
