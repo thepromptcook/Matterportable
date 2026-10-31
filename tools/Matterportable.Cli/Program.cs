@@ -1,0 +1,265 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Matterportable.Core;
+
+namespace Matterportable.Cli
+{
+    /// <summary>
+    /// matterportable - download, inspect and convert Matterport spaces outside Unity (same code as the Unity package).
+    /// </summary>
+    static class Program
+    {
+        const string Usage = @"matterportable <command> [options]
+
+Commands:
+  download <link> [--out DIR] [--pano 512,2048] [--textures high|low] [--max-sweeps N] [--concurrency N]
+        Download a space into DIR/<model id> (default DIR: ./MatterportCache). Resumable.
+  import <export.json> [--out DIR] [--pano ...]
+        Import a JSON file saved by the browser export script and download its assets.
+  demo [--out DIR] [--size 1024]
+        Write the procedural demo house (PNG panoramas) - no network needed.
+  info <space dir>
+        Summarise a cached space.
+  obj <space dir> [out.obj] [--frame unity|source]
+        Export the mesh (with materials) as OBJ for inspection in Blender etc.
+  align <space dir>
+        Run the panorama alignment solver (PNG spaces only; JPEG spaces are aligned inside Unity).
+  query <link>
+        Print the GraphQL query the importer sends.
+  browser-script [link]
+        Print the browser-console export script (fallback for blocked networks).
+";
+
+        static int Main(string[] args)
+        {
+            if (args.Length == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h")
+            {
+                Console.WriteLine(Usage);
+                return args.Length == 0 ? 1 : 0;
+            }
+            var log = new ConsoleLog();
+            using (var cts = new CancellationTokenSource())
+            {
+                Console.CancelKeyPress += (s, e) =>
+                {
+                    e.Cancel = true;
+                    cts.Cancel();
+                };
+                try
+                {
+                    var opts = Options.Parse(args.Skip(1).ToArray());
+                    switch (args[0])
+                    {
+                        case "download": return Download(opts, log, cts.Token).GetAwaiter().GetResult();
+                        case "import": return Import(opts, log, cts.Token).GetAwaiter().GetResult();
+                        case "demo": return Demo(opts);
+                        case "info": return Info(opts);
+                        case "obj": return Obj(opts);
+                        case "align": return Align(opts, log, cts.Token);
+                        case "query":
+                            Console.WriteLine(MatterportQueries.ModelQuery(MatterportLink.ParseModelId(opts.Positional(0, "link"))).Render());
+                            return 0;
+                        case "browser-script":
+                            Console.WriteLine(BrowserExport.BuildScript(opts.Count > 0 ? MatterportLink.ParseModelId(opts.Positional(0, "link")) : null));
+                            return 0;
+                        default:
+                            Console.Error.WriteLine("Unknown command: " + args[0]);
+                            Console.WriteLine(Usage);
+                            return 1;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    Console.Error.WriteLine("Cancelled (downloaded files are kept; run again to resume).");
+                    return 2;
+                }
+                catch (Exception e) when (e is MatterportException || e is ArgumentException || e is IOException || e is FormatException)
+                {
+                    Console.Error.WriteLine("error: " + e.Message);
+                    return 1;
+                }
+            }
+        }
+
+        static DownloadOptions DownloadOptionsFrom(Options o) => new DownloadOptions
+        {
+            PanoSizes = o.Get("pano", "512,2048").Split(',').Select(s => int.Parse(s.Trim(), CultureInfo.InvariantCulture)).ToArray(),
+            TextureQuality = o.Get("textures", "high"),
+            MaxSweeps = int.Parse(o.Get("max-sweeps", "0"), CultureInfo.InvariantCulture),
+            MaxConcurrency = int.Parse(o.Get("concurrency", "6"), CultureInfo.InvariantCulture),
+        };
+
+        static async Task<int> Download(Options o, ILogSink log, CancellationToken ct)
+        {
+            var id = MatterportLink.ParseModelId(o.Positional(0, "link"));
+            var dir = CacheLayout.SpaceDir(o.Get("out", CacheLayout.DefaultFolderName), id);
+            using (var http = new HttpClientTransport())
+            {
+                var downloader = new SpaceDownloader(http, log);
+                var task = downloader.DownloadAsync(id, dir, DownloadOptionsFrom(o), ct);
+                await Progress(task, downloader.Status);
+                var m = await task;
+                Console.WriteLine($"Done: \"{m.Name}\" → {dir}");
+            }
+            return 0;
+        }
+
+        static async Task<int> Import(Options o, ILogSink log, CancellationToken ct)
+        {
+            var file = o.Positional(0, "export.json");
+            using (var http = new HttpClientTransport())
+            {
+                var downloader = new SpaceDownloader(http, log);
+                var task = downloader.ImportExportAsync(File.ReadAllText(file), o.Get("out", CacheLayout.DefaultFolderName), DownloadOptionsFrom(o), ct);
+                await Progress(task, downloader.Status);
+                var m = await task;
+                Console.WriteLine($"Done: \"{m.Name}\" ({m.ModelId})");
+            }
+            return 0;
+        }
+
+        static async Task Progress(Task task, DownloadStatus status)
+        {
+            bool interactive = !Console.IsOutputRedirected;
+            while (!task.IsCompleted)
+            {
+                await Task.WhenAny(task, Task.Delay(500));
+                if (interactive) Console.Write("\r" + status.ToString().PadRight(Math.Max(0, Console.WindowWidth - 1)));
+            }
+            if (interactive) Console.WriteLine();
+        }
+
+        static int Demo(Options o)
+        {
+            int size = int.Parse(o.Get("size", "1024"), CultureInfo.InvariantCulture);
+            var space = SyntheticSpace.Generate(new SyntheticOptions { PanoSizes = new[] { Math.Max(32, size / 4), size } });
+            var dir = CacheLayout.SpaceDir(o.Get("out", CacheLayout.DefaultFolderName), space.Manifest.ModelId);
+            space.WriteTo(dir);
+            Console.WriteLine($"Demo space written to {dir}");
+            return 0;
+        }
+
+        static int Info(Options o)
+        {
+            var dir = o.Positional(0, "space dir");
+            var m = SpaceManifest.Load(dir);
+            var cal = SpaceCalibration.LoadOrDefault(dir);
+            Console.WriteLine($"{m.Name} ({m.ModelId})  source: {m.Source}  created: {m.CreatedUtc}");
+            Console.WriteLine($"Sweeps: {m.Sweeps.Count}, floors: {m.Floors.Count}, textures: {m.Textures.Count}, size: {IoUtil.FormatBytes(IoUtil.DirectorySize(dir))}");
+            var tiers = m.Sweeps.SelectMany(s => s.Tiers.Select(t => t.Size)).Distinct().OrderBy(x => x);
+            Console.WriteLine("Panorama tiers: " + string.Join(", ", tiers));
+            if (m.Mesh != null)
+            {
+                var mesh = DamDecoder.Decode(File.ReadAllBytes(CacheLayout.Resolve(dir, m.Mesh.File)));
+                var geo = SpaceGeometry.Build(mesh, cal);
+                Console.WriteLine($"Mesh: {mesh.VertexCount:N0} vertices, {mesh.TriangleCount:N0} triangles, {geo.Parts.Count} materials, " +
+                                  $"bounds {geo.BoundsMin} - {geo.BoundsMax} (Unity space)");
+                var sweeps = SweepBuilder.Build(m, cal, geo);
+                Console.WriteLine($"Sweeps above a floor: {sweeps.Count(s => s.FloorHit)}/{sweeps.Count}, " +
+                                  $"front-facing surfaces: {GeometryChecks.FrontFacingFraction(geo, sweeps):P0}");
+            }
+            else Console.WriteLine("Mesh: none");
+            Console.WriteLine($"Calibration: {cal.Method}, rotation {cal.Rotation}, frames {Frames.ToToken(cal.MeshFrame)}/{Frames.ToToken(cal.SweepFrame)}" +
+                              (double.IsNaN(cal.Score) ? "" : $", score {cal.Score:0.000}"));
+            Console.WriteLine("Faces: " + CubeFaces.Describe(cal.Faces));
+            foreach (var w in m.Warnings) Console.WriteLine("warning: " + w);
+            return 0;
+        }
+
+        static int Obj(Options o)
+        {
+            var dir = o.Positional(0, "space dir");
+            var outPath = o.Count > 1 ? o.Positional(1, "out.obj") : Path.Combine(dir, "mesh.obj");
+            bool unity = o.Get("frame", "unity") == "unity";
+            var m = SpaceManifest.Load(dir);
+            if (m.Mesh == null) throw new MatterportException("This space has no mesh.");
+            var cal = SpaceCalibration.LoadOrDefault(dir);
+            var mesh = DamDecoder.Decode(File.ReadAllBytes(CacheLayout.Resolve(dir, m.Mesh.File)));
+            var mtlPath = Path.ChangeExtension(outPath, ".mtl");
+            var sb = new StringBuilder();
+            sb.AppendLine("# Exported by matterportable (" + (unity ? "Unity frame: Y up, left-handed; import with X mirrored or Z flipped" : "source frame") + ")");
+            sb.AppendLine("mtllib " + Path.GetFileName(mtlPath));
+            var geo = SpaceGeometry.Build(mesh, cal);
+            for (int i = 0; i < mesh.VertexCount; i++)
+            {
+                var v = unity ? geo.Positions[i] : mesh.Vertex(i);
+                sb.Append("v ").Append(F(v.X)).Append(' ').Append(F(v.Y)).Append(' ').Append(F(v.Z)).Append('\n');
+            }
+            if (geo.HasUvs)
+                foreach (var uv in geo.Uvs) sb.Append("vt ").Append(F(uv.X)).Append(' ').Append(F(uv.Y)).Append('\n');
+            var mtl = new StringBuilder();
+            foreach (var part in geo.Parts)
+            {
+                var name = CacheLayout.SafeName(part.Material);
+                sb.AppendLine("usemtl " + name);
+                mtl.AppendLine("newmtl " + name).AppendLine("Kd 1 1 1");
+                var tex = m.TextureFileFor(part.Material);
+                if (tex != null) mtl.AppendLine("map_Kd " + Path.GetRelativePath(Path.GetDirectoryName(Path.GetFullPath(outPath)), CacheLayout.Resolve(dir, tex)).Replace('\\', '/'));
+                for (int t = 0; t < part.Indices.Length; t += 3)
+                {
+                    sb.Append('f');
+                    for (int k = 0; k < 3; k++)
+                    {
+                        int vi = part.Indices[t + k] + 1;
+                        sb.Append(' ').Append(vi);
+                        if (geo.HasUvs) sb.Append('/').Append(vi);
+                    }
+                    sb.Append('\n');
+                }
+            }
+            File.WriteAllText(outPath, sb.ToString());
+            File.WriteAllText(mtlPath, mtl.ToString());
+            Console.WriteLine($"Wrote {outPath} ({geo.TriangleCount:N0} triangles)");
+            return 0;
+        }
+
+        static string F(float f) => f.ToString("0.#####", CultureInfo.InvariantCulture);
+
+        static int Align(Options o, ILogSink log, CancellationToken ct)
+        {
+            var dir = o.Positional(0, "space dir");
+            var cal = CalibrationPipeline.Run(dir, path =>
+            {
+                if (!path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                    throw new NotSupportedException("The CLI can only decode PNG; align JPEG spaces inside Unity (inspector ▸ Re-run Panorama Alignment).");
+                return CalibrationPipeline.LoadPngLuma(path);
+            }, log, ct);
+            Console.WriteLine($"Calibration: {cal.Method}, rotation {cal.Rotation}, score {cal.Score:0.000}, margin {cal.Margin:0.000}");
+            return 0;
+        }
+
+        sealed class Options
+        {
+            readonly List<string> _positional = new List<string>();
+            readonly Dictionary<string, string> _named = new Dictionary<string, string>();
+
+            public int Count => _positional.Count;
+
+            public static Options Parse(string[] args)
+            {
+                var o = new Options();
+                for (int i = 0; i < args.Length; i++)
+                {
+                    if (args[i].StartsWith("--"))
+                    {
+                        var key = args[i].Substring(2);
+                        o._named[key] = i + 1 < args.Length && !args[i + 1].StartsWith("--") ? args[++i] : "true";
+                    }
+                    else o._positional.Add(args[i]);
+                }
+                return o;
+            }
+
+            public string Positional(int i, string name) =>
+                i < _positional.Count ? _positional[i] : throw new ArgumentException($"Missing argument: {name}");
+
+            public string Get(string key, string fallback) => _named.TryGetValue(key, out var v) ? v : fallback;
+        }
+    }
+}

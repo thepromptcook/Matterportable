@@ -138,8 +138,17 @@ namespace Matterportable
         {
             if (!Application.isPlaying || !IsLoaded) return;
             Panoramas?.Update();
+        }
+
+        // After the navigator's Update, so the shaders always match this frame's camera.
+        void LateUpdate()
+        {
+            if (!Application.isPlaying || !IsLoaded) return;
             ApplyShaderState();
         }
+
+        /// <summary>Shader-safe stand-in for "no clipping" (some GPUs mishandle infinities in uniforms).</summary>
+        const float NoClip = 1e9f;
 
         /// <summary>Reloads the space from the cache (downloading it if needed and allowed).</summary>
         public void Reload()
@@ -527,7 +536,7 @@ namespace Matterportable
             }
             Shader.SetGlobalMatrix(IdSpaceRot, Matrix4x4.Rotate(Quaternion.Inverse(transform.rotation)));
             Shader.SetGlobalVector(IdState, new Vector4(validB && validA ? _blend : (validB ? 1f : 0f), _projection, depth ? 1f : 0f, _debugView));
-            Shader.SetGlobalVector(IdValid, new Vector4(validA || validB ? 1f : 0f, validA && validB ? 1f : 0f, _clipHeight, 0f));
+            Shader.SetGlobalVector(IdValid, new Vector4(validA || validB ? 1f : 0f, validA && validB ? 1f : 0f, Mathf.Min(_clipHeight, NoClip), 0f));
             Shader.SetGlobalColor(IdBackground, Settings.backgroundColor);
         }
 
@@ -654,7 +663,7 @@ namespace Matterportable
                 }
                 // Show plain mesh textures in the Scene view.
                 Shader.SetGlobalVector(IdState, new Vector4(0, 0, 0, 0));
-                Shader.SetGlobalVector(IdValid, new Vector4(0, 0, float.PositiveInfinity, 0));
+                Shader.SetGlobalVector(IdValid, new Vector4(0, 0, NoClip, 0));
                 Status = $"{Manifest.Name}: {_sweeps.Count} sweeps" + (Geometry != null ? $", {Geometry.TriangleCount:N0} triangles" : ", no mesh");
             }
             catch (Exception e)

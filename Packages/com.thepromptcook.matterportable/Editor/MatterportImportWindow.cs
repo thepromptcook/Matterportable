@@ -23,7 +23,7 @@ namespace Matterportable.Editor
         [SerializeField] string _cacheFolder = "";
         [SerializeField] bool _createScene = true;
         [SerializeField] bool _enterPlayMode = true;
-        [SerializeField] int _demoFaceSize = 1024;
+        [SerializeField] int _demoFaceSize = 512;
 
         string _busy;
         CancellationTokenSource _cts;
