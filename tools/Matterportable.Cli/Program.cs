@@ -26,14 +26,10 @@ Commands:
         Write the procedural demo house (PNG panoramas) - no network needed.
   info <space dir>
         Summarise a cached space.
-  obj <space dir> [out.obj] [--frame unity|source]
-        Export the mesh (with materials) as OBJ for inspection in Blender etc.
   align <space dir>
         Run the panorama alignment solver (PNG spaces only; JPEG spaces are aligned inside Unity).
   diagnose <space dir>
         Print the diagnostics report (same as Copy Diagnostics in Unity; signed links redacted).
-  query <link>
-        Print the GraphQL query the importer sends.
   browser-script [link]
         Print the browser-console export script (fallback for blocked networks).
 ";
@@ -62,13 +58,9 @@ Commands:
                         case "import": return Import(opts, log, cts.Token).GetAwaiter().GetResult();
                         case "demo": return Demo(opts);
                         case "info": return Info(opts);
-                        case "obj": return Obj(opts);
                         case "align": return Align(opts, log, cts.Token);
                         case "diagnose":
                             Console.WriteLine(Diagnostics.Report(opts.Positional(0, "space dir"), "matterportable CLI"));
-                            return 0;
-                        case "query":
-                            Console.WriteLine(MatterportQueries.ModelQuery(MatterportLink.ParseModelId(opts.Positional(0, "link"))).Render());
                             return 0;
                         case "browser-script":
                             Console.WriteLine(BrowserExport.BuildScript(opts.Count > 0 ? MatterportLink.ParseModelId(opts.Positional(0, "link")) : null));
@@ -176,55 +168,6 @@ Commands:
             foreach (var w in m.Warnings) Console.WriteLine("warning: " + w);
             return 0;
         }
-
-        static int Obj(Options o)
-        {
-            var dir = o.Positional(0, "space dir");
-            var outPath = o.Count > 1 ? o.Positional(1, "out.obj") : Path.Combine(dir, "mesh.obj");
-            bool unity = o.Get("frame", "unity") == "unity";
-            var m = SpaceManifest.Load(dir);
-            if (m.Mesh == null) throw new MatterportException("This space has no mesh.");
-            var cal = SpaceCalibration.LoadOrDefault(dir);
-            var mesh = DamDecoder.Decode(File.ReadAllBytes(CacheLayout.Resolve(dir, m.Mesh.File)));
-            var mtlPath = Path.ChangeExtension(outPath, ".mtl");
-            var sb = new StringBuilder();
-            sb.AppendLine("# Exported by matterportable (" + (unity ? "Unity frame: Y up, left-handed; import with X mirrored or Z flipped" : "source frame") + ")");
-            sb.AppendLine("mtllib " + Path.GetFileName(mtlPath));
-            var geo = SpaceGeometry.Build(mesh, cal);
-            for (int i = 0; i < mesh.VertexCount; i++)
-            {
-                var v = unity ? geo.Positions[i] : mesh.Vertex(i);
-                sb.Append("v ").Append(F(v.X)).Append(' ').Append(F(v.Y)).Append(' ').Append(F(v.Z)).Append('\n');
-            }
-            if (geo.HasUvs)
-                foreach (var uv in geo.Uvs) sb.Append("vt ").Append(F(uv.X)).Append(' ').Append(F(uv.Y)).Append('\n');
-            var mtl = new StringBuilder();
-            foreach (var part in geo.Parts)
-            {
-                var name = CacheLayout.SafeName(part.Material);
-                sb.AppendLine("usemtl " + name);
-                mtl.AppendLine("newmtl " + name).AppendLine("Kd 1 1 1");
-                var tex = m.TextureFileFor(part.Material);
-                if (tex != null) mtl.AppendLine("map_Kd " + Path.GetRelativePath(Path.GetDirectoryName(Path.GetFullPath(outPath)), CacheLayout.Resolve(dir, tex)).Replace('\\', '/'));
-                for (int t = 0; t < part.Indices.Length; t += 3)
-                {
-                    sb.Append('f');
-                    for (int k = 0; k < 3; k++)
-                    {
-                        int vi = part.Indices[t + k] + 1;
-                        sb.Append(' ').Append(vi);
-                        if (geo.HasUvs) sb.Append('/').Append(vi);
-                    }
-                    sb.Append('\n');
-                }
-            }
-            File.WriteAllText(outPath, sb.ToString());
-            File.WriteAllText(mtlPath, mtl.ToString());
-            Console.WriteLine($"Wrote {outPath} ({geo.TriangleCount:N0} triangles)");
-            return 0;
-        }
-
-        static string F(float f) => f.ToString("0.#####", CultureInfo.InvariantCulture);
 
         static int Align(Options o, ILogSink log, CancellationToken ct)
         {

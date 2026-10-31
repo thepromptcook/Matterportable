@@ -216,29 +216,17 @@ namespace Matterportable
                 }
             }
 
-            // 3) Geometry on a worker thread.
+            // 3) Geometry on a worker thread (reused from the previous Play session when nothing changed).
             SetStatus("Building geometry", 0.65f);
             var manifest = Manifest;
             var cal = Calibration;
             var dir = SpaceDir;
             var log = _log;
-            var geoTask = Task.Run(() =>
-            {
-                SpaceGeometry geo = null;
-                if (manifest.Mesh != null)
-                {
-                    var bytes = File.ReadAllBytes(CacheLayout.Resolve(dir, manifest.Mesh.File));
-                    var mesh = DamDecoder.Decode(bytes, log);
-                    if (!mesh.HasUvs) DamDecoder.WriteDiagnostics(dir, bytes);
-                    geo = SpaceGeometry.Build(mesh, cal);
-                }
-                return (geo, sweeps: SweepBuilder.Build(manifest, cal, geo, log));
-            }, ct);
+            var geoTask = Task.Run(() => LoadGeometry(dir, manifest, cal, log), ct);
             while (!geoTask.IsCompleted) yield return null;
             if (geoTask.IsCanceled) yield break;
             if (geoTask.IsFaulted) { Fail("Could not build the mesh: " + Unwrap(geoTask.Exception)); yield break; }
-            Geometry = geoTask.Result.geo;
-            _sweeps = geoTask.Result.sweeps;
+            (Geometry, _sweeps) = geoTask.Result;
             ComputeFloorHeights();
 
             // 4) Unity objects.
@@ -265,7 +253,34 @@ namespace Matterportable
             Loaded?.Invoke(this);
 
             // 5) Mesh textures stream in afterwards (they matter for dollhouse view and occluded areas).
-            if (_mesh != null) yield return _mesh.LoadTexturesRoutine(Manifest, SpaceDir, Settings.compressMeshTextures);
+            if (_mesh != null) yield return _mesh.LoadTexturesRoutine(Manifest, SpaceDir);
+        }
+
+        static readonly object GeometryCacheLock = new object();
+        static (string key, SpaceGeometry geometry, List<SweepInfo> sweeps) _geometryCache;
+
+        /// <summary>
+        /// Decodes the mesh, builds the BVH and sweeps. The last result stays in memory: with fast Enter Play Mode
+        /// (no domain reload) the next Play skips this step entirely unless the mesh or calibration changed.
+        /// </summary>
+        static (SpaceGeometry, List<SweepInfo>) LoadGeometry(string dir, SpaceManifest manifest, SpaceCalibration cal, ILogSink log)
+        {
+            var meshPath = manifest.Mesh != null ? CacheLayout.Resolve(dir, manifest.Mesh.File) : null;
+            var key = string.Join("|", dir, meshPath != null ? File.GetLastWriteTimeUtc(meshPath).Ticks : 0, manifest.Sweeps.Count, cal.ToJson().ToJson(false));
+            lock (GeometryCacheLock)
+                if (_geometryCache.key == key) return (_geometryCache.geometry, _geometryCache.sweeps);
+
+            SpaceGeometry geo = null;
+            if (meshPath != null)
+            {
+                var bytes = File.ReadAllBytes(meshPath);
+                var mesh = DamDecoder.Decode(bytes, log);
+                if (!mesh.HasUvs) DamDecoder.WriteDiagnostics(dir, bytes);
+                geo = SpaceGeometry.Build(mesh, cal);
+            }
+            var sweeps = SweepBuilder.Build(manifest, cal, geo, log);
+            lock (GeometryCacheLock) _geometryCache = (key, geo, sweeps);
+            return (geo, sweeps);
         }
 
         void ComputeFloorHeights()
@@ -449,9 +464,7 @@ namespace Matterportable
             {
                 Manifest = SpaceManifest.Load(SpaceDir);
                 Calibration = SpaceCalibration.LoadOrDefault(SpaceDir);
-                if (Manifest.Mesh != null)
-                    Geometry = SpaceGeometry.Build(DamDecoder.Decode(File.ReadAllBytes(CacheLayout.Resolve(SpaceDir, Manifest.Mesh.File))), Calibration);
-                _sweeps = SweepBuilder.Build(Manifest, Calibration, Geometry);
+                (Geometry, _sweeps) = LoadGeometry(SpaceDir, Manifest, Calibration, null);
                 ComputeFloorHeights();
                 if (Geometry != null)
                 {

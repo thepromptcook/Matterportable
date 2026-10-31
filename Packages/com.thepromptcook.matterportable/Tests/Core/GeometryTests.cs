@@ -74,6 +74,16 @@ namespace Matterportable.Tests
             Assert.IsFalse(Frames.FlipsHandedness(CoordinateFrame.Unity));
         }
 
+        [TestCase(0.05f)]
+        [TestCase(1.53f)]
+        [TestCase(12.7f)]
+        [TestCase(1000f)]
+        public void HalfFloatKeepsDepthPrecision(float meters)
+        {
+            float back = HalfFloat.ToFloat(HalfFloat.FromFloat(meters));
+            Assert.AreEqual(meters, back, meters * 0.002f);
+        }
+
         [Test]
         public void QuaternionMatrixRoundTrip()
         {

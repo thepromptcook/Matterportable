@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Runtime.InteropServices;
 
 namespace Matterportable.Core
 {
@@ -281,6 +282,38 @@ namespace Matterportable.Core
                 case "unity": return CoordinateFrame.Unity;
                 default: return fallback;
             }
+        }
+    }
+
+    /// <summary>IEEE half-precision encoding (for GPU depth maps), usable on worker threads.</summary>
+    public static class HalfFloat
+    {
+        [StructLayout(LayoutKind.Explicit)]
+        struct Bits
+        {
+            [FieldOffset(0)] public float F;
+            [FieldOffset(0)] public uint U;
+        }
+
+        /// <summary>Round-toward-zero conversion; tiny values flush to zero, huge ones become infinity.</summary>
+        public static ushort FromFloat(float value)
+        {
+            uint b = new Bits { F = value }.U;
+            uint sign = (b >> 16) & 0x8000u;
+            int exponent = (int)((b >> 23) & 0xFF) - 127 + 15;
+            if (exponent <= 0) return (ushort)sign;
+            if (exponent >= 31) return (ushort)(sign | 0x7C00u);
+            return (ushort)(sign | ((uint)exponent << 10) | ((b & 0x7FFFFFu) >> 13));
+        }
+
+        public static float ToFloat(ushort h)
+        {
+            uint sign = (uint)(h & 0x8000) << 16;
+            int exponent = (h >> 10) & 0x1F;
+            uint mantissa = (uint)(h & 0x3FF);
+            if (exponent == 0) return 0f * (sign != 0 ? -1 : 1);
+            uint bits = exponent == 31 ? sign | 0x7F800000u | (mantissa << 13) : sign | ((uint)(exponent - 15 + 127) << 23) | (mantissa << 13);
+            return new Bits { U = bits }.F;
         }
     }
 }

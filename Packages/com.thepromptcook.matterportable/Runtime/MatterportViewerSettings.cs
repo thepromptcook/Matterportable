@@ -63,8 +63,6 @@ namespace Matterportable
         public Color backgroundColor = new Color(0.11f, 0.11f, 0.12f, 1f);
 
         [Header("Mesh")]
-        [Tooltip("Compress mesh textures after loading (much less GPU memory, slightly slower first load).")]
-        public bool compressMeshTextures = true;
         [Tooltip("Adds a MeshCollider so your own gameplay code can raycast the space with Physics.")]
         public bool addMeshCollider;
 

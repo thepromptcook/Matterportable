@@ -26,7 +26,7 @@ namespace Matterportable
             {
                 ModelId = ModelId,
                 PanoSizes = new[] { Math.Max(64, faceSize / 4), faceSize },
-                TextureSize = 512,
+                TextureSize = Math.Max(128, faceSize / 2),
                 ImageExtension = "jpg",
             };
             var space = await Task.Run(() => SyntheticSpace.Generate(options), ct);

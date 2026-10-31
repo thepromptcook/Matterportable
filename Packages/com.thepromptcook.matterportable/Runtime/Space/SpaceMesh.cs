@@ -2,9 +2,9 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
-using System.Threading.Tasks;
 using Matterportable.Core;
 using UnityEngine;
+using UnityEngine.Networking;
 using UnityEngine.Rendering;
 
 namespace Matterportable
@@ -17,7 +17,7 @@ namespace Matterportable
 
         readonly Mesh _mesh;
         readonly List<Material> _materials = new List<Material>();
-        readonly List<Texture2D> _textures = new List<Texture2D>();
+        readonly List<Texture> _textures = new List<Texture>();
         readonly Dictionary<string, int> _materialIndex = new Dictionary<string, int>();
 
         public GameObject Object { get; }
@@ -78,54 +78,49 @@ namespace Matterportable
             foreach (var m in _materials) m.SetFloat(IdCull, (float)mode);
         }
 
-        /// <summary>Edit mode: loads all textures synchronously (uncompressed, quick to rebuild).</summary>
+        /// <summary>Edit mode: loads all textures synchronously (no coroutines outside Play mode).</summary>
         public void LoadTexturesNow(SpaceManifest manifest, string spaceDir)
         {
             foreach (var entry in manifest.Textures)
             {
                 var path = CacheLayout.Resolve(spaceDir, entry.File);
                 if (!_materialIndex.ContainsKey(entry.Material ?? "") || !File.Exists(path)) continue;
-                Assign(entry.Material, DecodeTexture(File.ReadAllBytes(path), false, entry.Material));
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, true) { name = entry.Material, hideFlags = HideFlags.DontSave, wrapMode = TextureWrapMode.Repeat };
+                if (tex.LoadImage(File.ReadAllBytes(path), true)) Assign(entry.Material, tex);
+                else MpUtil.SafeDestroy(tex);
             }
         }
 
-        /// <summary>Play mode: reads files on a worker thread and decodes one texture per frame.</summary>
-        public IEnumerator LoadTexturesRoutine(SpaceManifest manifest, string spaceDir, bool compress)
+        /// <summary>Play mode: all textures decode in parallel off the main thread, then copy to mipmapped GPU targets.</summary>
+        public IEnumerator LoadTexturesRoutine(SpaceManifest manifest, string spaceDir)
         {
+            var pending = new List<(string material, UnityWebRequest request)>();
             foreach (var entry in manifest.Textures)
             {
-                if (!_materialIndex.ContainsKey(entry.Material ?? "")) continue;
                 var path = CacheLayout.Resolve(spaceDir, entry.File);
-                var read = Task.Run(() => File.Exists(path) ? File.ReadAllBytes(path) : null);
-                while (!read.IsCompleted) yield return null;
-                if (read.IsFaulted || read.Result == null) continue;
-                Assign(entry.Material, DecodeTexture(read.Result, compress, entry.Material));
-                yield return null;
+                if (_materialIndex.ContainsKey(entry.Material ?? "") && File.Exists(path)) pending.Add((entry.Material, GpuTextures.Load(path)));
+            }
+            foreach (var (material, request) in pending)
+            {
+                while (!request.isDone) yield return null;
+                if (GpuTextures.Succeeded(request) && Object != null)
+                {
+                    var decoded = GpuTextures.Content(request);
+                    var rt = GpuTextures.Create(decoded.width, decoded.height, 1, TextureWrapMode.Repeat, material);
+                    Graphics.Blit(decoded, rt);
+                    rt.GenerateMips();
+                    MpUtil.SafeDestroy(decoded);
+                    Assign(material, rt);
+                }
+                request.Dispose();
             }
         }
 
-        void Assign(string material, Texture2D tex)
+        void Assign(string material, Texture tex)
         {
-            if (tex == null || Object == null) return;
             _textures.Add(tex);
             _materials[_materialIndex[material ?? ""]].SetTexture(IdMainTex, tex);
             TexturesLoaded++;
-        }
-
-        static Texture2D DecodeTexture(byte[] bytes, bool compress, string name)
-        {
-            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, true) { name = name, hideFlags = HideFlags.DontSave };
-            if (!tex.LoadImage(bytes, false))
-            {
-                MpUtil.SafeDestroy(tex);
-                return null;
-            }
-            tex.wrapMode = TextureWrapMode.Repeat;
-            tex.filterMode = FilterMode.Trilinear;
-            tex.anisoLevel = 4;
-            if (compress && SystemInfo.SupportsTextureFormat(TextureFormat.DXT1)) tex.Compress(false);
-            tex.Apply(false, true);
-            return tex;
         }
 
         public void Dispose()
@@ -133,7 +128,11 @@ namespace Matterportable
             MpUtil.SafeDestroy(Object);
             MpUtil.SafeDestroy(_mesh);
             foreach (var m in _materials) MpUtil.SafeDestroy(m);
-            foreach (var t in _textures) MpUtil.SafeDestroy(t);
+            foreach (var t in _textures)
+            {
+                if (t is RenderTexture rt) rt.Release();
+                MpUtil.SafeDestroy(t);
+            }
             _materials.Clear();
             _textures.Clear();
         }

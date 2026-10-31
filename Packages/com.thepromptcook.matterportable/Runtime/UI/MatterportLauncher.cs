@@ -94,10 +94,10 @@ namespace Matterportable
         async void OpenDemo()
         {
             _busy = true;
-            _message = "Building the demo house (a few seconds the first time)…";
+            _message = "Building the demo house (a few seconds, first time only)…";
             try
             {
-                await DemoSpace.EnsureAsync("", 512, false, CancellationToken.None);
+                await DemoSpace.EnsureAsync("", 384, false, CancellationToken.None);
                 if (this == null) return;
                 _busy = false;
                 Open(DemoSpace.ModelId);

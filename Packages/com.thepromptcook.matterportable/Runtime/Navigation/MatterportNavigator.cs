@@ -142,22 +142,10 @@ namespace Matterportable
         public void GoTo(int sweep)
         {
             if (!Ready || sweep < 0 || sweep >= space.Sweeps.Count) return;
-            if (_mode != ViewMode.Inside) { FlyInto(sweep); return; }
+            if (_mode != ViewMode.Inside) { WhenPanoramaReady(sweep, flyIn: true); return; }
             if (sweep == _current && !_move.Active) return;
-            if (_move.Active || _anim.Active)
-            {
-                _queued = sweep;
-                return;
-            }
-            if (!space.Panoramas.IsReady(sweep))
-            {
-                space.Panoramas.RequestProgressive(sweep, S.panoMaxSize, -10f);
-                _pending = sweep;
-                _pendingSince = Time.unscaledTime;
-                _pendingIsFlyIn = false;
-                return;
-            }
-            StartMove(sweep);
+            if (_move.Active || _anim.Active) _queued = sweep;
+            else WhenPanoramaReady(sweep, flyIn: false);
         }
 
         /// <summary>Jumps instantly (no transition) - handy for tests and tools.</summary>
@@ -177,12 +165,8 @@ namespace Matterportable
         public void SetMode(ViewMode mode)
         {
             if (!Ready || _anim.Active || mode == _mode) return;
-            if (mode == ViewMode.Inside)
-            {
-                FlyInto(_current >= 0 ? _current : 0);
-                return;
-            }
-            StartOrbitMode(mode);
+            if (mode == ViewMode.Inside) WhenPanoramaReady(Mathf.Max(0, _current), flyIn: true);
+            else StartOrbitMode(mode);
         }
 
         public void SetFloor(int floor)
@@ -199,6 +183,7 @@ namespace Matterportable
         }
 
         bool Ready => space != null && space.IsLoaded && space.Sweeps.Count > 0 && _cam != null;
+        float MoveT => Mathf.Clamp01((Time.unscaledTime - _move.Start) / Mathf.Max(0.01f, _move.Duration));
 
         // ------------------------------------------------------------------ frame
 
@@ -412,28 +397,21 @@ namespace Matterportable
             var s = S;
             var dir = Quaternion.Euler(0, _yaw, 0) * localDirection;
             var from = space.SweepWorldPosition(_current);
-            var candidates = space.Sweeps[_current].Neighbors;
             int best = -1;
             float bestScore = float.MaxValue;
-            for (int pass = 0; pass < 2 && best < 0; pass++)
+            void Consider(int i)
             {
-                int count = pass == 0 ? candidates.Count : space.Sweeps.Count;
-                for (int k = 0; k < count; k++)
-                {
-                    int i = pass == 0 ? candidates[k] : k;
-                    if (i == _current) continue;
-                    if (pass == 1 && !IsVisible(i)) continue;
-                    var v = space.SweepWorldPosition(i) - from;
-                    v.y = 0;
-                    float dist = v.magnitude;
-                    if (dist < 0.2f || dist > s.stepMaxDistance) continue;
-                    float angle = Vector3.Angle(dir, v);
-                    if (angle > s.stepMaxAngle) continue;
-                    float a = angle / s.stepMaxAngle;
-                    float score = dist * (1f + 1.5f * a * a);
-                    if (score < bestScore) { bestScore = score; best = i; }
-                }
+                var v = space.SweepWorldPosition(i) - from;
+                v.y = 0;
+                float dist = v.magnitude, angle = Vector3.Angle(dir, v);
+                if (i == _current || dist < 0.2f || dist > s.stepMaxDistance || angle > s.stepMaxAngle) return;
+                float a = angle / s.stepMaxAngle;
+                float score = dist * (1f + 1.5f * a * a); // prefer close sweeps straight ahead
+                if (score < bestScore) { bestScore = score; best = i; }
             }
+            foreach (int i in space.Sweeps[_current].Neighbors) Consider(i);
+            if (best < 0)
+                for (int i = 0; i < space.Sweeps.Count; i++) if (IsVisible(i)) Consider(i);
             if (best >= 0) GoTo(best);
         }
 
@@ -478,11 +456,19 @@ namespace Matterportable
             space.Panoramas.Request(to, s.panoMaxSize, -5f);
         }
 
+        /// <summary>Moves (or flies in) once the target's panorama is loaded - after at most 4 s, so a slow disk never blocks.</summary>
+        void WhenPanoramaReady(int sweep, bool flyIn)
+        {
+            _pending = sweep;
+            _pendingIsFlyIn = flyIn;
+            _pendingSince = Time.unscaledTime;
+            if (!space.Panoramas.IsReady(sweep)) space.Panoramas.RequestProgressive(sweep, S.panoMaxSize, -10f);
+            UpdatePending();
+        }
+
         void UpdatePending()
         {
-            if (_pending < 0) return;
-            bool ready = space.Panoramas.IsReady(_pending);
-            if (!ready && Time.unscaledTime - _pendingSince < 4f) return;
+            if (_pending < 0 || (!space.Panoramas.IsReady(_pending) && Time.unscaledTime - _pendingSince < 4f)) return;
             int target = _pending;
             _pending = -1;
             if (_pendingIsFlyIn) BeginFlyIn(target);
@@ -492,8 +478,7 @@ namespace Matterportable
         void UpdateMove()
         {
             if (!_move.Active) return;
-            float t = Mathf.Clamp01((Time.unscaledTime - _move.Start) / Mathf.Max(0.01f, _move.Duration));
-            if (t >= 1f)
+            if (MoveT >= 1f)
             {
                 _move.Active = false;
                 Arrive(_move.To);
@@ -580,62 +565,39 @@ namespace Matterportable
             _orbitTarget = _orbitTargetGoal = OrbitCenter();
             _orbitDistance = _orbitDistanceGoal = OrbitDistanceFor(mode);
             var to = OrbitPose(_orbitTarget, _orbitYaw, _orbitPitch, _orbitDistance);
-            _anim = new ModeAnim
-            {
-                Active = true,
-                Target = mode,
-                Start = Time.unscaledTime,
-                Duration = s.modeTransitionTime,
-                FromPos = transform.position,
-                ToPos = to.position,
-                FromRot = transform.rotation,
-                ToRot = to.rotation,
-                FromFov = _cam.fieldOfView,
-                ToFov = mode == ViewMode.Floorplan ? s.floorplanFov : s.dollhouseFov,
-                FromProj = _projection,
-                ToProj = 0f,
-                Sweep = _current,
-            };
+            Animate(mode, to.position, to.rotation, mode == ViewMode.Floorplan ? s.floorplanFov : s.dollhouseFov, 0f, _current);
             space.SetCullMode(CullMode.Back);
             _move = default;
         }
 
-        void FlyInto(int sweep)
-        {
-            if (!space.Panoramas.IsReady(sweep))
-            {
-                space.Panoramas.RequestProgressive(sweep, S.panoMaxSize, -10f);
-                _pending = sweep;
-                _pendingSince = Time.unscaledTime;
-                _pendingIsFlyIn = true;
-                return;
-            }
-            BeginFlyIn(sweep);
-        }
-
         void BeginFlyIn(int sweep)
         {
-            var s = S;
             _yaw = _targetYaw = _mode == ViewMode.Inside ? _yaw : _orbitYaw;
             _pitch = _targetPitch = 0f;
+            _fov = _targetFov = S.defaultFov;
+            Animate(ViewMode.Inside, space.SweepWorldPosition(sweep), Quaternion.Euler(0, _yaw, 0), _fov, 1f, sweep);
+            _current = sweep;
+            space.Panoramas.RequestDepth(sweep);
+        }
+
+        void Animate(ViewMode target, Vector3 toPos, Quaternion toRot, float toFov, float toProjection, int sweep)
+        {
             _anim = new ModeAnim
             {
                 Active = true,
-                Target = ViewMode.Inside,
+                Target = target,
                 Start = Time.unscaledTime,
-                Duration = s.modeTransitionTime,
+                Duration = S.modeTransitionTime,
                 FromPos = transform.position,
-                ToPos = space.SweepWorldPosition(sweep),
+                ToPos = toPos,
                 FromRot = transform.rotation,
-                ToRot = Quaternion.Euler(0, _yaw, 0),
+                ToRot = toRot,
                 FromFov = _cam.fieldOfView,
-                ToFov = _targetFov = _fov = s.defaultFov,
+                ToFov = toFov,
                 FromProj = _projection,
-                ToProj = 1f,
+                ToProj = toProjection,
                 Sweep = sweep,
             };
-            _current = sweep;
-            space.Panoramas.RequestDepth(sweep);
         }
 
         void UpdateModeAnim()
@@ -675,13 +637,7 @@ namespace Matterportable
                 _yaw = Mathf.LerpAngle(_yaw, _targetYaw, k);
                 _pitch = Mathf.Lerp(_pitch, _targetPitch, k);
                 _fov = Mathf.Lerp(_fov, _targetFov, k);
-                Vector3 pos;
-                if (_move.Active)
-                {
-                    float t = Mathf.Clamp01((Time.unscaledTime - _move.Start) / Mathf.Max(0.01f, _move.Duration));
-                    pos = Vector3.LerpUnclamped(_move.FromPos, _move.ToPos, s.transitionEase.Evaluate(t));
-                }
-                else pos = space.SweepWorldPosition(_current);
+                var pos = _move.Active ? Vector3.LerpUnclamped(_move.FromPos, _move.ToPos, s.transitionEase.Evaluate(MoveT)) : space.SweepWorldPosition(_current);
                 transform.SetPositionAndRotation(pos, Quaternion.Euler(_pitch, _yaw, 0));
                 _cam.fieldOfView = _fov;
             }
@@ -711,8 +667,7 @@ namespace Matterportable
             {
                 a = _move.From;
                 b = _move.To;
-                float t = Mathf.Clamp01((Time.unscaledTime - _move.Start) / Mathf.Max(0.01f, _move.Duration));
-                blend = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.1f, 0.9f, t));
+                blend = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.1f, 0.9f, MoveT));
             }
             else if (_anim.Active)
             {

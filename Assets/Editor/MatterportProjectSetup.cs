@@ -13,13 +13,15 @@ using NewSceneSetup = UnityEditor.SceneManagement.NewSceneSetup;
 /// <summary>
 /// Project setup for Unity 6, run automatically on load (project-level, deliberately not part of the package):
 /// installs URP and the Input System (versions matching the editor), creates and assigns a URP asset, switches
-/// Active Input Handling to the Input System, turns off deprecated Dynamic Batching, and creates/opens the
-/// Launcher start scene once. Idempotent; Tools ▸ Matterportable ▸ Configure Project re-runs it.
+/// Active Input Handling to the Input System, turns off deprecated Dynamic Batching, enables fast Enter Play Mode
+/// (no domain reload) and creates/opens the Launcher start scene once. After the first full run it only does a
+/// cheap check per script reload. Tools ▸ Matterportable ▸ Configure Project re-runs it fully.
 /// </summary>
 [InitializeOnLoad]
 static class MatterportProjectSetup
 {
     const string LauncherOpenedKey = "Matterportable.ProjectSetup.OpenedImporter";
+    const string ConfiguredKey = "Matterportable.ProjectSetup.Configured.v1";
     const string LauncherScene = "Assets/Matterport/Launcher.unity";
     const string UrpAssetType = "UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset, Unity.RenderPipelines.Universal.Runtime";
     const string UrpRendererType = "UnityEngine.Rendering.Universal.UniversalRendererData, Unity.RenderPipelines.Universal.Runtime";
@@ -42,6 +44,8 @@ static class MatterportProjectSetup
     static void Run(bool interactive)
     {
         if (EditorApplication.isPlayingOrWillChangePlaymode || _request != null) return;
+        // Fast path for every script reload once configured.
+        if (!interactive && EditorPrefs.GetBool(ConfiguredKey + ProjectKey, false) && GraphicsSettings.defaultRenderPipeline != null) return;
 
         bool needUrp = Type.GetType(UrpAssetType) == null;
         bool needInput = Type.GetType(InputSystemType) == null;
@@ -49,8 +53,12 @@ static class MatterportProjectSetup
         bool needHandler = GetPlayerSetting("activeInputHandler", -1) == 0;
         bool needBatching = DynamicBatchingEnabled();
 
+        bool needFastPlay = EditorSettings.enterPlayModeOptions != EnterPlayModeOptions.DisableDomainReload;
+        if (needFastPlay) EnableFastEnterPlayMode();
+
         if (!(needUrp || needInput || needPipeline || needHandler || needBatching))
         {
+            EditorPrefs.SetBool(ConfiguredKey + ProjectKey, true);
             EnsureLauncherScene();
             if (interactive) Debug.Log("[Matterportable] Project already configured.");
             return;
@@ -88,6 +96,18 @@ static class MatterportProjectSetup
         AssetDatabase.SaveAssets();
         Debug.Log("[Matterportable] Project configured for Unity 6 (URP + Input System).");
         EnsureLauncherScene();
+    }
+
+    /// <summary>Enter Play mode without reloading scripts (seconds faster per Play; the package is written for it).</summary>
+    static void EnableFastEnterPlayMode()
+    {
+#if !UNITY_6000_0_OR_NEWER
+#pragma warning disable CS0618
+        EditorSettings.enterPlayModeOptionsEnabled = true;
+#pragma warning restore CS0618
+#endif
+        EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.DisableDomainReload;
+        Debug.Log("[Matterportable] Enabled fast Enter Play Mode (no domain reload).");
     }
 
     static void WaitForPackages()

@@ -6,14 +6,13 @@ using System.Threading.Tasks;
 using Matterportable.Core;
 using UnityEngine;
 using UnityEngine.Networking;
-using UnityEngine.Rendering;
 
 namespace Matterportable
 {
     /// <summary>
-    /// Streams sweep panoramas from the cache folder into GPU texture arrays (6 slices, mipmapped), with progressive
-    /// resolution (small tier first, then the large one), an LRU memory budget, and occlusion depth maps built on
-    /// worker threads from the mesh BVH.
+    /// Streams sweep panoramas from the cache folder into GPU texture arrays (6 slices, mipmapped): small tier first,
+    /// then the large one (one load per sweep at a time, so the preview really arrives first), within an LRU memory
+    /// budget. Occlusion depth maps are ray-cast on worker threads from the mesh BVH.
     /// </summary>
     public sealed class PanoramaCache : IDisposable
     {
@@ -42,7 +41,7 @@ namespace Matterportable
         readonly MatterportSpace _space;
         readonly Dictionary<int, Entry> _entries = new Dictionary<int, Entry>();
         readonly List<PendingLoad> _queue = new List<PendingLoad>();
-        readonly ConcurrentQueue<(int sweep, float[] depth, int size)> _depthResults = new ConcurrentQueue<(int, float[], int)>();
+        readonly ConcurrentQueue<(int sweep, ushort[] depth, int size)> _depthResults = new ConcurrentQueue<(int, ushort[], int)>();
         readonly Material _blit;
         int _activeLoads;
         bool _disposed;
@@ -50,7 +49,6 @@ namespace Matterportable
         public int MaxConcurrentLoads = 2;
         /// <summary>Sweeps that must not be evicted (current, transition target).</summary>
         public Func<int, bool> IsPinned = _ => false;
-        public event Action<int> PanoramaLoaded;
 
         public int ActiveLoads => _activeLoads;
         public int Queued => _queue.Count;
@@ -76,15 +74,10 @@ namespace Matterportable
 
         public Entry Get(int sweep) => _entries.TryGetValue(sweep, out var e) ? e : null;
         public bool IsReady(int sweep) => Get(sweep)?.Faces != null;
-        public bool IsLoading(int sweep) => Get(sweep)?.LoadingSize > 0 || _queue.Exists(r => r.Sweep == sweep);
 
         Entry GetOrCreate(int sweep)
         {
-            if (!_entries.TryGetValue(sweep, out var e))
-            {
-                e = new Entry { Sweep = sweep };
-                _entries[sweep] = e;
-            }
+            if (!_entries.TryGetValue(sweep, out var e)) _entries[sweep] = e = new Entry { Sweep = sweep };
             return e;
         }
 
@@ -97,24 +90,17 @@ namespace Matterportable
             var e = GetOrCreate(sweep);
             e.LastUsed = Time.unscaledTime;
             if (e.Size >= tier.Size || e.LoadingSize >= tier.Size) return;
-            int existing = _queue.FindIndex(r => r.Sweep == sweep);
-            if (existing >= 0)
-            {
-                var r = _queue[existing];
-                if (r.Tier.Size >= tier.Size && r.Priority <= priority) return;
-                _queue.RemoveAt(existing);
-                if (r.Tier.Size > tier.Size) tier = r.Tier;
-                priority = Mathf.Min(priority, r.Priority);
-            }
-            _queue.Add(new PendingLoad { Sweep = sweep, Tier = tier, Priority = priority });
+            int existing = _queue.FindIndex(r => r.Sweep == sweep && r.Tier.Size == tier.Size);
+            if (existing < 0) _queue.Add(new PendingLoad { Sweep = sweep, Tier = tier, Priority = priority });
+            else if (priority < _queue[existing].Priority) _queue[existing] = new PendingLoad { Sweep = sweep, Tier = tier, Priority = priority };
         }
 
-        /// <summary>Progressive request: smallest tier immediately, then the target size.</summary>
+        /// <summary>Progressive request: the smallest tier first (quick preview), then up to <paramref name="maxSize"/>.</summary>
         public void RequestProgressive(int sweep, int maxSize, float priority)
         {
             if (sweep < 0 || sweep >= _space.Manifest.Sweeps.Count) return;
-            var entry = _space.Manifest.Sweeps[sweep];
-            if (!IsReady(sweep) && entry.SmallestTier != null) Request(sweep, entry.SmallestTier.Size, priority - 0.5f);
+            var smallest = _space.Manifest.Sweeps[sweep].SmallestTier;
+            if (!IsReady(sweep) && smallest != null) Request(sweep, smallest.Size, priority - 0.5f);
             Request(sweep, maxSize, priority);
         }
 
@@ -135,22 +121,18 @@ namespace Matterportable
             var origin = _space.Sweeps[sweep].Position;
             Task.Run(() =>
             {
-                try
-                {
-                    var depth = ComputeDepth(geo.Bvh, origin, size);
-                    _depthResults.Enqueue((sweep, depth, size));
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogException(ex);
-                }
+                try { _depthResults.Enqueue((sweep, ComputeDepth(geo.Bvh, origin, size), size)); }
+                catch (Exception ex) { Debug.LogException(ex); }
             });
         }
 
-        /// <summary>Distance from the sweep to the first surface, per canonical (space-aligned) cube face texel.</summary>
-        public static float[] ComputeDepth(Bvh bvh, Vec3 origin, int size)
+        /// <summary>
+        /// Distance from the sweep to the first surface per canonical (space-aligned) cube-face texel, as half floats
+        /// (converted here on the worker thread, ready to upload).
+        /// </summary>
+        public static ushort[] ComputeDepth(Bvh bvh, Vec3 origin, int size)
         {
-            var data = new float[6 * size * size];
+            var data = new ushort[6 * size * size];
             Parallel.For(0, 6 * size, row =>
             {
                 int face = row / size, y = row % size;
@@ -158,7 +140,7 @@ namespace Matterportable
                 for (int x = 0; x < size; x++)
                 {
                     var dir = CubeFaces.Direction(face, (x + 0.5f) / size, (y + 0.5f) / size).Normalized;
-                    data[offset + x] = bvh.Raycast(origin, dir, 500f, out var hit) ? hit.Distance : 1000f;
+                    data[offset + x] = HalfFloat.FromFloat(bvh.Raycast(origin, dir, 500f, out var hit) ? hit.Distance : 1000f);
                 }
             });
             return data;
@@ -168,12 +150,10 @@ namespace Matterportable
         {
             if (_disposed) return;
 
-            // Upload finished depth maps (a couple per frame).
-            for (int i = 0; i < 2 && _depthResults.TryDequeue(out var r); i++)
+            // Upload one finished depth map per frame.
+            if (_depthResults.TryDequeue(out var r) && _entries.TryGetValue(r.sweep, out var depthEntry))
             {
-                if (!_entries.TryGetValue(r.sweep, out var e)) continue;
-                var format = SystemInfo.SupportsTextureFormat(TextureFormat.RHalf) ? TextureFormat.RHalf : TextureFormat.RFloat;
-                var tex = new Texture2DArray(r.size, r.size, 6, format, false, true)
+                var tex = new Texture2DArray(r.size, r.size, 6, TextureFormat.RHalf, false, true)
                 {
                     name = "Matterport depth " + r.sweep,
                     wrapMode = TextureWrapMode.Clamp,
@@ -181,39 +161,27 @@ namespace Matterportable
                     hideFlags = HideFlags.HideAndDontSave,
                 };
                 int n = r.size * r.size;
-                if (format == TextureFormat.RHalf)
-                {
-                    var half = new ushort[n];
-                    for (int f = 0; f < 6; f++)
-                    {
-                        for (int k = 0; k < n; k++) half[k] = Mathf.FloatToHalf(r.depth[f * n + k]);
-                        tex.SetPixelData(half, 0, f);
-                    }
-                }
-                else
-                {
-                    var buf = new float[n];
-                    for (int f = 0; f < 6; f++)
-                    {
-                        Array.Copy(r.depth, f * n, buf, 0, n);
-                        tex.SetPixelData(buf, 0, f);
-                    }
-                }
+                for (int f = 0; f < 6; f++) tex.SetPixelData(r.depth, 0, f, f * n);
                 tex.Apply(false, true);
-                if (e.Depth != null) MpUtil.SafeDestroy(e.Depth);
-                e.Depth = tex;
+                if (depthEntry.Depth != null) MpUtil.SafeDestroy(depthEntry.Depth);
+                depthEntry.Depth = tex;
             }
 
-            // Start queued loads, best priority first.
-            while (_activeLoads < MaxConcurrentLoads && _queue.Count > 0)
+            // Start queued loads by priority, one per sweep at a time.
+            while (_activeLoads < MaxConcurrentLoads)
             {
-                int best = 0;
-                for (int i = 1; i < _queue.Count; i++) if (_queue[i].Priority < _queue[best].Priority) best = i;
+                int best = -1;
+                for (int i = 0; i < _queue.Count; i++)
+                {
+                    var e = Get(_queue[i].Sweep);
+                    if (e != null && e.LoadingSize > 0) continue;
+                    if (best < 0 || _queue[i].Priority < _queue[best].Priority) best = i;
+                }
+                if (best < 0) break;
                 var req = _queue[best];
                 _queue.RemoveAt(best);
-                var e = GetOrCreate(req.Sweep);
-                if (e.Size >= req.Tier.Size || e.LoadingSize >= req.Tier.Size) continue;
-                _space.StartCoroutine(Load(e, req.Tier));
+                var entry = GetOrCreate(req.Sweep);
+                if (entry.Size < req.Tier.Size) _space.StartCoroutine(Load(entry, req.Tier));
             }
 
             EvictOverBudget();
@@ -233,7 +201,8 @@ namespace Matterportable
                 used -= e.Bytes;
                 MpUtil.Release(ref e.Faces);
                 e.Size = 0;
-                if (e.Depth != null) { MpUtil.SafeDestroy(e.Depth); e.Depth = null; }
+                if (e.Depth != null) MpUtil.SafeDestroy(e.Depth);
+                e.Depth = null;
                 e.DepthRequested = false;
             }
         }
@@ -252,35 +221,24 @@ namespace Matterportable
                 for (int x = 0; x < tiles; x++)
                 {
                     var rel = tiles == 1 ? tier.FacePath(face) : tier.TilePath(face, x, y);
-                    var req = UnityWebRequestTexture.GetTexture(MpUtil.FileUri(CacheLayout.Resolve(_space.SpaceDir, rel)), true);
-                    req.SendWebRequest();
-                    requests.Add((req, face, x, y));
+                    requests.Add((GpuTextures.Load(CacheLayout.Resolve(_space.SpaceDir, rel)), face, x, y));
                 }
-
                 foreach (var r in requests)
                     while (!r.req.isDone) yield return null;
                 if (_disposed) yield break;
-
                 foreach (var r in requests)
                 {
-                    if (!Succeeded(r.req))
-                    {
-                        Debug.LogWarning($"[Matterportable] Could not load panorama {tier.Directory} face {r.face}: {r.req.error}");
-                        yield break;
-                    }
+                    if (GpuTextures.Succeeded(r.req)) continue;
+                    Debug.LogWarning($"[Matterportable] Could not load panorama {tier.Directory} face {r.face}: {r.req.error}");
+                    yield break;
                 }
 
                 RenderTexture rt = null;
-                int size = 0;
+                float inv = 1f / tiles;
                 foreach (var r in requests)
                 {
-                    var tex = DownloadHandlerTexture.GetContent(r.req);
-                    if (rt == null)
-                    {
-                        size = tex.width * tiles;
-                        rt = CreateArray(size, $"Matterport pano {e.Sweep} ({size})");
-                    }
-                    float inv = 1f / tiles;
+                    var tex = GpuTextures.Content(r.req);
+                    if (rt == null) rt = GpuTextures.Create(tex.width * tiles, tex.width * tiles, 6, TextureWrapMode.Clamp, $"Matterport pano {e.Sweep}");
                     // Tile rows are numbered from the top of the face image.
                     _blit.SetVector("_Rect", new Vector4(r.x * inv, 1f - (r.y + 1) * inv, inv, inv));
                     Graphics.Blit(tex, rt, _blit, 0, r.face);
@@ -288,19 +246,15 @@ namespace Matterportable
                 }
                 rt.GenerateMips();
 
-                if (e.Faces != null && e.Size >= size)
-                {
-                    MpUtil.Release(ref rt);
-                }
+                if (e.Faces != null && e.Size >= rt.width) MpUtil.Release(ref rt); // a larger tier won the race
                 else
                 {
                     MpUtil.Release(ref e.Faces);
                     e.Faces = rt;
-                    e.Size = size;
+                    e.Size = rt.width;
                 }
                 e.LoadSeconds = Time.realtimeSinceStartup - started;
                 e.LastUsed = Time.unscaledTime;
-                PanoramaLoaded?.Invoke(e.Sweep);
             }
             finally
             {
@@ -308,38 +262,6 @@ namespace Matterportable
                 e.LoadingSize = 0;
                 _activeLoads--;
             }
-        }
-
-        static bool Succeeded(UnityWebRequest req)
-        {
-#if UNITY_2020_2_OR_NEWER
-            return req.result == UnityWebRequest.Result.Success;
-#else
-            return !req.isNetworkError && !req.isHttpError;
-#endif
-        }
-
-        static RenderTexture CreateArray(int size, string name)
-        {
-            var desc = new RenderTextureDescriptor(size, size, RenderTextureFormat.ARGB32, 0)
-            {
-                dimension = TextureDimension.Tex2DArray,
-                volumeDepth = 6,
-                useMipMap = true,
-                autoGenerateMips = false,
-                sRGB = QualitySettings.activeColorSpace == ColorSpace.Linear,
-                msaaSamples = 1,
-            };
-            var rt = new RenderTexture(desc)
-            {
-                name = name,
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Trilinear,
-                anisoLevel = 4,
-                hideFlags = HideFlags.HideAndDontSave,
-            };
-            rt.Create();
-            return rt;
         }
 
         public void Dispose()
