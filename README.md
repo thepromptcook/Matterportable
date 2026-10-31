@@ -35,8 +35,9 @@ so you can check the whole pipeline offline.
 The menu also appears automatically when you press Play in an empty scene (no camera, no Matterport Space). Downloads are cached
 in `<project>/MatterportCache/<model id>/`, outside `Assets`, so Unity never imports them.
 
-The editor workflow is still available: *Window ▸ Matterportable ▸ Import Space* creates a dedicated scene per
-space, with sweep tools in the inspector. *Tools ▸ Matterportable ▸ Configure Project* re-runs the setup.
+**In the editor:** *GameObject ▸ Matterportable ▸ Matterport Space + Camera* adds a space to any scene. Its inspector
+downloads, previews, aligns and diagnoses the space in Edit mode, and *Tools ▸ Matterportable* has the browser-export
+fallback.
 
 ### Use it in your own project
 
@@ -72,8 +73,10 @@ edits apply live during Play.
 - **Paste-and-Play.** One component loads everything at runtime from the cache. Nothing is imported into `Assets`,
   so there is no import wait and no asset bloat.
 - **Cached, resumable downloads.** Re-running skips finished files, and cancelling keeps partial progress.
-- **Fast Enter Play Mode.** *Tools ▸ Matterportable ▸ Enable Fast Enter Play Mode* turns off domain reload. The code
-  is written to be safe without it.
+- **Fast Enter Play Mode.** The project setup turns off domain reload, so Play starts in about a second. The
+  decoded mesh is kept between Play sessions, so reopening a space skips decoding.
+- **Smooth loading.** Images decode off the main thread straight into mipmapped GPU textures. Each photo point shows
+  its 512 px preview first, then sharpens to 2048 px.
 - **Edit-mode preview.** The textured mesh and sweep positions show in the Scene view. Click a sweep handle, or
   **Look** in the inspector, to put the Scene camera there.
 - **Play from any sweep.** The inspector's sweep list has a ▶ button per sweep, plus **Start** to set the default.
@@ -81,17 +84,17 @@ edits apply live during Play.
   - F1 shows FPS, panorama cache memory, load times and alignment score.
   - F2 cycles render views: mesh texture, panorama only, occlusion visibility and blend weights.
   - F3 labels sweeps, and P runs an automatic tour.
-- **Headless tools.** A CLI (`tools/Matterportable.Cli`) downloads, inspects and exports spaces to OBJ without Unity.
+- **Headless tools.** A CLI (`tools/Matterportable.Cli`) downloads, inspects and diagnoses spaces without Unity.
 - **Tests.** The core suite runs in seconds with `dotnet test tools/Matterportable.Core.Tests`. The same files run in
   Unity's Test Runner (EditMode), alongside Unity-only EditMode tests and a **PlayMode** test that loads a space,
   moves between sweeps and switches views.
 - **Quiet Console, full logs.** Progress goes to `MatterportCache/<id>/debug/load.log`. Turn on **Verbose Logging**
   in the viewer settings to also see it in the Console.
-- **One-click diagnostics.** **Copy Diagnostics** (inspector or import window) puts a redacted report about the
+- **One-click diagnostics.** **Copy Diagnostics** in the space's inspector puts a redacted report about the
   space on your clipboard: manifest, alignment, load log, mesh structure and API sample. It's all that's needed to
   debug a space.
-- **Builds.** Spaces used by build scenes are bundled into `StreamingAssets` automatically during a build. You can
-  toggle this under *Tools ▸ Matterportable*.
+- **Builds.** Players download a space the first time it's opened, into `persistentDataPath`. To ship a space
+  offline, copy its `MatterportCache/<id>` folder to `Assets/StreamingAssets/Matterport/<id>`.
 
 ## How it works
 
@@ -133,10 +136,10 @@ its assumptions against the data:
 
 | Symptom | What to do |
 |---|---|
-| *"Matterport's bot protection blocked the request"* | Use the **browser export**: in the import window click **Copy Browser Export Script**. Open `https://my.matterport.com/show/?m=<id>` in your normal browser, paste the script into the developer console (F12 ▸ Console) and press Enter. A `matterport-<id>.json` file downloads. Then click **Import Browser Export…** and pick it. Do this promptly, because the links inside expire. |
+| *"Matterport's bot protection blocked the request"* | Use the **browser export**: run *Tools ▸ Matterportable ▸ Copy Browser Export Script*. Open `https://my.matterport.com/show/?m=<id>` in your normal browser, paste the script into the developer console (F12 ▸ Console) and press Enter. A `matterport-<id>.json` file downloads. Then run *Tools ▸ Matterportable ▸ Import Browser Export…* and pick it. Do this promptly, because the links inside expire. |
 | Panoramas look rotated, mirrored or don't line up with the mesh | Inspector ▸ **Re-run Panorama Alignment**. If the score shown is low, open **Alignment (advanced)**: change *Sweep rotation*, try **Rotate faces 90°**, or edit faces directly. Changes apply live in Play mode and are saved as manual. |
 | Mesh is sideways or inside out | Inspector ▸ Alignment ▸ *Mesh frame / Sweep frame / Flip winding*. |
-| Download, decode or display problem | Click **Copy Diagnostics** in the space's inspector (or the import window) and paste the report into your issue or chat. The raw files are in `MatterportCache/<id>/debug/`. |
+| Download, decode or display problem | Click **Copy Diagnostics** in the space's inspector and paste the report into your issue or chat. The raw files are in `MatterportCache/<id>/debug/`. |
 | "Space only offers streamed mesh tiles" | Newer spaces may only have 3D-tile meshes, which aren't supported yet. The space still works panorama-only: click navigation with transitions, skybox rendering. |
 | Pink / black surfaces | The project uses HDRP, which isn't supported. Use the Built-in render pipeline or URP. |
 
@@ -150,7 +153,7 @@ Packages/com.thepromptcook.matterportable/   the Unity package
   Runtime/Navigation/  MatterportNavigator (camera, transitions, view modes), NavInput, SweepMarkers
   Runtime/UI/          MatterportLauncher (in-game menu), MatterportHud
   Runtime/Resources/   shaders (projection, skybox, markers, face blit)
-  Editor/              import window, inspector, scene builder, build hook
+  Editor/              MatterportSpace inspector, editor tools (downloads, diagnostics, menus)
   Tests/               Core (dotnet + Unity) · Editor (EditMode) · PlayMode
   Tools~/              browser-export.js (fallback exporter)
 Assets/Editor/         project setup (URP, Input System, Launcher scene)

@@ -54,8 +54,6 @@ namespace Matterportable
         public GameObject MeshObject => _mesh?.Object;
         public int FloorCount => _floorHeights.Count;
         public float LastLoadSeconds { get; private set; }
-        /// <summary>Everything logged during the last load (also saved to debug/load.log).</summary>
-        public string LoadLog => _log.Text();
 
         public event Action<MatterportSpace> Loaded;
 

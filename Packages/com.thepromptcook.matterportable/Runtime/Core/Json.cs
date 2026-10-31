@@ -139,8 +139,6 @@ namespace Matterportable.Core
             return fallback;
         }
 
-        public float AsFloat(float fallback = 0) => (float)AsDouble(fallback);
-
         public int AsInt(int fallback = 0)
         {
             if (Kind == JsonKind.Number) return (int)Math.Round(_number);

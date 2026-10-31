@@ -12,10 +12,10 @@ and pastes back Console output or a diagnostics report.
 
 ```bash
 tools/setup-dev.sh     # once per container: .NET 8 SDK, glslang, NuGet restore
-tools/check.sh         # every check (~20 s): core tests, Unity compile x3, CLI, browser script, shaders, metas
+tools/check.sh         # every check (~20 s): core tests, Unity compile x3, CLI, browser script, shaders, metas, dead code
 tools/check.sh --fast  # core tests + scripts only
 dotnet test tools/Matterportable.Core.Tests --filter Alignment
-dotnet run --project tools/Matterportable.Cli -- help   # download / demo / info / obj / align / diagnose …
+dotnet run --project tools/Matterportable.Cli -- help   # download / import / demo / info / align / diagnose / browser-script
 ```
 
 Add `/opt/dotnet` to `PATH` if `dotnet` isn't found.
@@ -27,15 +27,16 @@ Packages/com.thepromptcook.matterportable/
   Runtime/Core/        engine-agnostic C# (noEngineReferences): link parsing, JSON, self-healing GraphQL
                        client, downloader, DAM decoder, BVH, frames, alignment solver, synthetic space, diagnostics
   Runtime/Space/       MatterportSpace (component: load lifecycle + queries), SpaceMesh (Unity mesh), SpaceRenderer
-                       (shader globals), PanoramaCache (streaming), CalibrationRunner, DemoSpace
+                       (shader globals), PanoramaCache (streaming), GpuTextures (async image → GPU),
+                       CalibrationRunner, DemoSpace
   Runtime/Navigation/  MatterportNavigator (camera, transitions, view modes), NavInput, SweepMarkers
   Runtime/UI/          MatterportLauncher (in-game start menu), MatterportHud, MpGui (shared styles)
   Runtime/             MatterportRig (space + camera), MatterportViewerSettings, Utilities
   Runtime/Resources/Matterportable/   shaders: Mesh (projection), Skybox, Marker, FaceBlit + MatterportCommon.hlsl
-  Editor/              import window, inspector, scene builder, build hook
+  Editor/              MatterportSpaceEditor (inspector), MatterportEditorTools (downloads with progress, diagnostics, menus)
   Tests/Core/          NUnit, run by dotnet AND Unity · Tests/Editor/ Unity EditMode · Tests/PlayMode/ end-to-end
   Tools~/browser-export.js   generated from the C# query (fallback exporter)
-Assets/Editor/MatterportProjectSetup.cs   project-level setup (URP, Input System, Launcher scene)
+Assets/Editor/MatterportProjectSetup.cs   project-level setup (URP, Input System, fast Enter Play Mode, Launcher scene)
 tools/                CLI, test runner project, UnityCompileCheck (+ API stubs), check scripts
 ```
 
@@ -76,10 +77,17 @@ The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceD
   - `manual`: set by the user in the inspector, and kept
 - **Shader globals** are written only by `SpaceRenderer.Apply` (once per frame, in `LateUpdate`). Every shader
   declares them in `MatterportCommon.hlsl`. Change both together.
+- **Domain reload is off** (fast Enter Play Mode, set by the project setup), so statics survive between Play sessions.
+  - Deliberate: `MatterportSpace` reuses the last decoded geometry (`LoadGeometry` cache key: mesh timestamp +
+    calibration).
+  - Anything else static must be reset with `[RuntimeInitializeOnLoadMethod(SubsystemRegistration)]` (see
+    `NavInput`).
+- **Images load through `GpuTextures`** (UnityWebRequestTexture decode off the main thread, GPU blit and mips).
+  Don't decode images on the main thread in Play mode; `Texture2D.LoadImage` is only for Edit mode and the solver.
 
 ## Debugging what the user reports
 
-Ask for **Copy Diagnostics** (MatterportSpace inspector or import window). It produces
+Ask for **Copy Diagnostics** (MatterportSpace inspector, also in Play mode). It produces
 `debug/diagnostics.txt` with the manifest summary, calibration, pruned query fields, `load.log`, the DAM structure
 dump and a redacted API sample. The skill `.claude/skills/matterportable-dev` maps symptoms to code. Matterport
 format facts confirmed on real data are in `.claude/skills/matterportable-dev/matterport-formats.md`; update that

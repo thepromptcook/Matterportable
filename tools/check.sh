@@ -19,7 +19,7 @@ step() {
     echo "ok    $name"
   else
     echo "FAIL  $name"
-    grep -E "error|Error|FAIL|Failed|failed|missing|orphaned" "$log" | grep -v "^\s*$" | head -25 | sed 's/^/      /'
+    grep -E "error|Error|FAIL|Failed|failed|missing|orphaned|unused" "$log" | grep -v "^\s*$" | head -25 | sed 's/^/      /'
     failed+=("$name")
   fi
   rm -f "$log"
@@ -53,6 +53,7 @@ else skip "browser export" "node not installed"; fi
 if command -v glslangValidator >/dev/null; then step "shaders (glslang HLSL)" python3 tools/check_shaders.py
 else skip "shaders" "glslang-tools not installed"; fi
 step ".meta files" python3 tools/generate_metas.py --check
+step "no unused members" python3 tools/find_unused.py
 
 echo
 if [[ ${#failed[@]} -eq 0 ]]; then echo "All checks passed."; exit 0; fi

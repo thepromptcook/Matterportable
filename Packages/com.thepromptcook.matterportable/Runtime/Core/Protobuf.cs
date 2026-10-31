@@ -57,14 +57,6 @@ namespace Matterportable.Core
 
         public static long ZigZag(ulong v) => (long)(v >> 1) ^ -(long)(v & 1);
 
-        public uint ReadFixed32()
-        {
-            Need(4);
-            uint v = (uint)(_buf[_pos] | _buf[_pos + 1] << 8 | _buf[_pos + 2] << 16 | _buf[_pos + 3] << 24);
-            _pos += 4;
-            return v;
-        }
-
         public float ReadFloat()
         {
             Need(4);

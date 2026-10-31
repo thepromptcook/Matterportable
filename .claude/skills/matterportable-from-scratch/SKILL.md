@@ -59,10 +59,12 @@ Core (pure C#)
   DamDecoder → SpaceGeometry (frame conversion, per-material parts, BVH) → SweepBuilder (floor points, floors, neighbours)
   SpaceCalibrator.CheckGeometry + PanoAlignmentSolver → calibration.json      (CalibrationPipeline wires it up)
 Unity runtime
-  MatterportSpace (load coroutine; worker threads for decode/BVH) ─ SpaceMesh ─ SpaceRenderer (shader globals) ─ PanoramaCache
+  MatterportSpace (load coroutine; worker threads for decode/BVH; geometry reused across Play sessions)
+    ─ SpaceMesh ─ SpaceRenderer (shader globals) ─ PanoramaCache ─ GpuTextures (async decode → GPU blit + mips)
   MatterportNavigator (+ NavInput, SweepMarkers) · MatterportLauncher (start menu) · MatterportHud · MatterportRig
-Editor: import window, inspector (sweep list, Play-from-sweep, manual alignment, Copy Diagnostics), build hook
-Project: Assets/Editor/MatterportProjectSetup.cs (URP + Input System + Launcher scene)
+Editor: inspector (download with progress, preview, sweep list, Play-from-sweep, alignment fixes, Copy Diagnostics)
+        + MatterportEditorTools (Tools menu: browser-export import/script, cache folder)
+Project: Assets/Editor/MatterportProjectSetup.cs (URP + Input System + fast Enter Play Mode + Launcher scene)
 ```
 
 ## Build order (each step has a check before moving on)
@@ -88,7 +90,7 @@ Project: Assets/Editor/MatterportProjectSetup.cs (URP + Input System + Launcher 
    - Check: glslang compiles every stage.
 7. **Runtime:** MatterportSpace loading, PanoramaCache, SpaceRenderer, SpaceMesh, navigator, HUD, launcher, rig.
    - Check: the editor, player and Input System compile configurations all pass.
-8. **Editor and project:** import window, inspector, build hook, setup script, `.meta` generation, PlayMode test.
+8. **Editor and project:** inspector, editor tools, setup script, `.meta` generation, PlayMode test.
    - Check: `tools/check.sh` is all green.
 9. **Real data with the user:** expect two or three round trips (schema field names, UV location, winding).
    Record the facts in `matterportable-dev/matterport-formats.md`.
@@ -142,3 +144,10 @@ Project: Assets/Editor/MatterportProjectSetup.cs (URP + Input System + Launcher 
 - **An empty scene shows nothing on Play.** The launcher bootstraps itself into scenes with no camera and no
   space, and the setup script creates and opens `Assets/Matterport/Launcher.unity`.
 - **Keep the Console quiet** (info goes to `debug/load.log`); the user reads every line as a problem.
+- **Progressive loading needs one queue entry per (sweep, size).** Deduplicating per sweep made the large request
+  replace the small one, so the preview never showed.
+- **Never decode images on the main thread in Play mode.** `Texture2D.LoadImage` plus `Compress()` hitched about
+  100 ms per texture. Use `UnityWebRequestTexture` (worker decode) with a GPU blit into a mipmapped render texture.
+- **Build only what the main workflow needs.** The user wanted the in-game launcher, so the editor import window
+  and the build-scene bundling hook became dead weight and were removed. Keep the editor to inspector actions and
+  menus.

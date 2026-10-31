@@ -55,7 +55,8 @@ tools/check.sh
 | Markers, cursor | `SweepMarkers.cs`, `MatterportMarker.shader` |
 | Menu, HUD, Esc | `Runtime/UI/MatterportLauncher.cs`, `MatterportHud.cs`, `MpGui.cs` |
 | Input not working | `NavInput.cs` (legacy vs Input System via `MATTERPORTABLE_INPUT_SYSTEM`) |
-| Editor windows, inspector, builds | `Editor/` (`MatterportImportWindow`, `MatterportSpaceEditor`, `MatterportBuildHook`) |
+| Inspector, editor downloads, Tools menu | `Editor/MatterportSpaceEditor.cs`, `Editor/MatterportEditorTools.cs` |
+| Images slow or hitching | `Runtime/Space/GpuTextures.cs` (async decode → GPU) used by `PanoramaCache` and `SpaceMesh` |
 | Project setup, URP, startup warnings | `Assets/Editor/MatterportProjectSetup.cs` |
 
 ## 3. Making a change
@@ -73,6 +74,41 @@ tools/check.sh
 - **Query changes:** regenerate `Tools~/browser-export.js`, and update the `FakeMatterport` schema.
 - **Deprecations:** the user sees Unity 6.5 deprecation warnings that the 2021 reference assemblies can't show.
   When one is reported, add a version-guarded path (`#if UNITY_6000_5_OR_NEWER`) inside a shared helper.
+- **Domain reload is off** in the user's project (fast Enter Play Mode), so statics survive between Play sessions.
+  Reset new static state in `[RuntimeInitializeOnLoadMethod(SubsystemRegistration)]`, or key caches on everything
+  they depend on, as the geometry cache in `MatterportSpace.LoadGeometry` does.
+- **Keep the codebase small.**
+  - Delete code that no workflow reaches (the in-game launcher is the main entry point; the editor only adds
+    inspector actions and menus).
+  - Prefer one shared helper over a second copy.
+  - `tools/check.sh` runs `tools/find_unused.py`, which fails on members nothing references. Delete them, or add
+    genuine API to its `ALLOWED` list.
+
+## Load timeline (what runs where)
+
+This is the order for a launcher "Open space". Keep main-thread work small; everything heavy belongs on a worker or
+the GPU.
+
+1. **`MatterportRig.Create`** builds the space and camera, then `MatterportSpace.Start` begins `LoadRoutine`.
+2. **Download, if not cached** (network, `SpaceDownloader`, background tasks).
+3. **Read `manifest.json` and `calibration.json`** (main thread, milliseconds).
+4. **First load only: alignment.** The ~50 small images are decoded on the main thread (Unity's decoder), then
+   `CalibrationPipeline` runs on a worker. The result is saved; a failed solve is saved as `unsolved` and not
+   retried.
+5. **Geometry.** `LoadGeometry` decodes the DAM, builds the BVH and the sweeps on a worker. It is reused across Play
+   sessions while the mesh and calibration are unchanged.
+6. **Main-thread setup** (milliseconds): the Unity mesh, `SpaceRenderer` and `PanoramaCache`, then the `Loaded`
+   event. The navigator arrives at the start sweep.
+7. **Panoramas.** The 512 px preview comes first, then 2048 px, one load per sweep at a time (`GpuTextures`: decode
+   off the main thread, GPU blit and mips). Up to 4 neighbours are prefetched.
+8. **Mesh textures** decode in parallel off the main thread into mipmapped render textures.
+9. **Depth maps**, one per visited sweep, are ray-cast on workers as half floats and uploaded at one per frame.
+
+Per frame, the main thread does:
+- `SpaceRenderer.Apply`: shader globals
+- the navigator's hover ray-cast against the BVH
+- up to about 20 marker draws
+- IMGUI (HUD and launcher)
 
 ## 4. Reading what the user sends
 

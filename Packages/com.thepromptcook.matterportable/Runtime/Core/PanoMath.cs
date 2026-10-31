@@ -183,8 +183,6 @@ namespace Matterportable.Core
         public int SweepsUsed;
         public List<string> Notes = new List<string>();
 
-        public bool IsSolved => Method == Solver || Method == Synthetic || Method == Manual;
-
         /// <summary>True until the solver has run once (failed runs are not repeated automatically).</summary>
         public bool NeedsSolve => Method == Default;
 

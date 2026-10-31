@@ -92,22 +92,10 @@ namespace Matterportable.Core
         public List<string> Warnings = new List<string>();
         public List<string> TilesetUrls = new List<string>();
 
-        public int FindSweep(string id)
-        {
-            for (int i = 0; i < Sweeps.Count; i++) if (Sweeps[i].Id == id) return i;
-            return -1;
-        }
-
         public int FindFloor(string id)
         {
             for (int i = 0; i < Floors.Count; i++) if (Floors[i].Id == id) return i;
             return -1;
-        }
-
-        public string TextureFileFor(string material)
-        {
-            foreach (var t in Textures) if (t.Material == material) return t.File;
-            return null;
         }
 
         public JsonValue ToJson()
