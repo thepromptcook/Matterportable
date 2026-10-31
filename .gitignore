@@ -10,6 +10,7 @@
 /[Rr]ecordings/
 *.csproj
 !/godot/*.csproj
+!/web/**/*.csproj
 *.sln
 *.suo
 *.user
@@ -32,6 +33,8 @@ crashlytics-build.properties
 /Assets/StreamingAssets/Matterport.meta
 
 # dotnet tool builds
+/web/**/bin/
+/web/**/obj/
 /tools/**/bin/
 /tools/**/obj/
 !/tools/**/*.csproj

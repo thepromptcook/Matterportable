@@ -87,6 +87,73 @@ namespace Matterportable.Core
             }
         }
 
+        Bvh(Vec3[] positions, int[] indices, Node[] nodes, int[] order)
+        {
+            TriangleCount = order.Length;
+            _nodes = nodes;
+            _nodeCount = nodes.Length;
+            _tri = order;
+            _v0 = new Vec3[order.Length];
+            _e1 = new Vec3[order.Length];
+            _e2 = new Vec3[order.Length];
+            for (int s = 0; s < order.Length; s++)
+            {
+                int t = order[s];
+                var a = positions[indices[3 * t]];
+                _v0[s] = a;
+                _e1[s] = positions[indices[3 * t + 1]] - a;
+                _e2[s] = positions[indices[3 * t + 2]] - a;
+            }
+        }
+
+        /// <summary>
+        /// The built hierarchy (nodes and triangle order) as bytes. <see cref="FromHierarchy"/> restores the BVH
+        /// with one linear pass instead of the build (the web viewer gets it from the server: building in
+        /// WebAssembly takes seconds).
+        /// </summary>
+        public byte[] SerializeHierarchy()
+        {
+            using (var ms = new System.IO.MemoryStream())
+            using (var w = new System.IO.BinaryWriter(ms))
+            {
+                w.Write(_nodeCount);
+                w.Write(_tri.Length);
+                for (int i = 0; i < _nodeCount; i++)
+                {
+                    var n = _nodes[i];
+                    w.Write(n.Min.X); w.Write(n.Min.Y); w.Write(n.Min.Z);
+                    w.Write(n.Max.X); w.Write(n.Max.Y); w.Write(n.Max.Z);
+                    w.Write(n.LeftOrFirst);
+                    w.Write(n.Count);
+                }
+                foreach (int t in _tri) w.Write(t);
+                w.Flush();
+                return ms.ToArray();
+            }
+        }
+
+        /// <summary>Restores a BVH over the same <paramref name="positions"/> and <paramref name="indices"/>.</summary>
+        public static Bvh FromHierarchy(Vec3[] positions, int[] indices, byte[] hierarchy)
+        {
+            using (var r = new System.IO.BinaryReader(new System.IO.MemoryStream(hierarchy)))
+            {
+                int nodeCount = r.ReadInt32(), triangles = r.ReadInt32();
+                if (triangles * 3 != indices.Length) throw new ArgumentException("The hierarchy was built for a different mesh.");
+                var nodes = new Node[nodeCount];
+                for (int i = 0; i < nodeCount; i++)
+                    nodes[i] = new Node
+                    {
+                        Min = new Vec3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
+                        Max = new Vec3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle()),
+                        LeftOrFirst = r.ReadInt32(),
+                        Count = r.ReadInt32(),
+                    };
+                var order = new int[triangles];
+                for (int i = 0; i < triangles; i++) order[i] = r.ReadInt32();
+                return new Bvh(positions, indices, nodes, order);
+            }
+        }
+
         void Build(int[] order, Vec3[] centroid, Vec3[] tmin, Vec3[] tmax, int n)
         {
             var work = new System.Collections.Generic.Stack<(int node, int start, int count)>();

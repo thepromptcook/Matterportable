@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <!-- The shared Core compiled to WebAssembly for the browser client (ray casts, measure tool). Built by the server
+       project; no wasm workload needed. -->
+  <PropertyGroup>
+    <TargetFramework>net$(BundledNETCoreAppTargetFrameworkVersion)</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Nullable>disable</Nullable>
+    <NoWarn>$(NoWarn);CS0649;CA1416</NoWarn>
+    <PublishDir>$(MSBuildThisFileDirectory)bin/publish/</PublishDir>
+    <DebuggerSupport>false</DebuggerSupport>
+    <EventSourceSupport>false</EventSourceSupport>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Packages/com.thepromptcook.matterportable/Runtime/Core/**/*.cs" Link="Core/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

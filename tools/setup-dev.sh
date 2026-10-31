@@ -35,4 +35,8 @@ export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 "$DOTNET" restore tools/UnityCompileCheck >/dev/null
 "$DOTNET" restore tools/Matterportable.Core.Tests >/dev/null
 "$DOTNET" restore godot/Matterportable.csproj >/dev/null
+"$DOTNET" restore web/server >/dev/null
+"$DOTNET" restore web/wasm/Matterportable.Wasm.csproj >/dev/null
+NODE_PATH="$(npm root -g 2>/dev/null)" node -e "require('playwright')" 2>/dev/null \
+  || echo "  node + playwright not found: the web run check will be skipped (npm i -g playwright && npx playwright install chromium)"
 echo "Ready. Run: tools/check.sh   (add /opt/dotnet to PATH if dotnet is not found)"

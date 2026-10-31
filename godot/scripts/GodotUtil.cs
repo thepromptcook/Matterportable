@@ -22,10 +22,9 @@ namespace Matterportable
         /// </summary>
         public static Basis ShaderRotation(Mat3 m)
         {
-            var f = m.Column(2).Normalized;
-            var r = Vec3.Cross(m.Column(1), f).Normalized;
-            var u = Vec3.Cross(f, r);
-            return new Basis(new Vector3(r.X, r.Y, r.Z), new Vector3(u.X, u.Y, u.Z), new Vector3(f.X, f.Y, f.Z));
+            var q = Frames.ShaderRotation(m);
+            Vector3 C(int i) { var c = q.Column(i); return new Vector3(c.X, c.Y, c.Z); }
+            return new Basis(C(0), C(1), C(2));
         }
 
         /// <summary>Decodes a PNG/JPEG/WebP file. Safe on worker threads (keep decoding off the main thread).</summary>

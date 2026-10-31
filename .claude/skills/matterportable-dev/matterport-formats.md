@@ -108,6 +108,8 @@ Not confirmed, so these are our choices:
 | 4FXijnxaBcJ IU Paleontology Collection | 60 | 0.89, margin 0.46 | 0.0°, corr 0.46 | 2.71 m | 1.70 m |
 | L4VL15Qoh2e Virtual Bicentennial Bus | 16 | 0.89, margin 0.64 | 0.0°, corr 0.49 | 2.12 m | 1.42 m |
 
+- **Web version:** the same four spaces, rendered in headless Chromium (`tools/web-check.sh --compare`), are all
+  ALIGNED: 0.0-0.07° offset, correlation 0.42 / 0.41 / 0.46 / 0.49, the same as Godot.
 - **Same face layout and rotation on all four:** `Direct`, with faces
   `0:F+Y R-Z U-X 1:F+X R-Z U+Y 2:F-Z R-X U+Y 3:F-X R+Z U+Y 4:F+Z R+X U+Y 5:F-Y R-Z U+X`.
   - This is now `CubeFaces.DefaultMatterportLayout`. The previous default had several faces rotated 90°.

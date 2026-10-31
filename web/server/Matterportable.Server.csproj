@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- The Matterportable web server: downloads and prepares spaces with the shared Core, serves the browser client
+       (../client), the WebAssembly Core (../wasm) and the space files. Run: dotnet run, project web/server. -->
+  <PropertyGroup>
+    <!-- Whatever .NET the machine has (8, 9, 10...): the SDK's own version, rolling forward at run time. -->
+    <TargetFramework>net$(BundledNETCoreAppTargetFrameworkVersion)</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <AssemblyName>matterportable-web</AssemblyName>
+    <RootNamespace>Matterportable.Web</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <NoWarn>$(NoWarn);CS0649</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Packages/com.thepromptcook.matterportable/Runtime/Core/**/*.cs" Link="Core/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Content Include="../client/**" LinkBase="wwwroot" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Publish the WebAssembly Core (trimmed) and copy its _framework into wwwroot (served at /_framework). -->
+  <Target Name="BuildWasmCore" BeforeTargets="Build">
+    <MSBuild Projects="../wasm/Matterportable.Wasm.csproj" Targets="Restore;Publish" Properties="Configuration=Release" />
+    <ItemGroup>
+      <WasmFramework Include="../wasm/bin/publish/wwwroot/_framework/**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WasmFramework)" DestinationFiles="@(WasmFramework->'$(OutDir)wwwroot/_framework/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="PublishWasmCore" AfterTargets="Publish">
+    <ItemGroup>
+      <WasmFrameworkPublish Include="../wasm/bin/publish/wwwroot/_framework/**" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WasmFrameworkPublish)" DestinationFiles="@(WasmFrameworkPublish->'$(PublishDir)wwwroot/_framework/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

@@ -5,7 +5,8 @@ description: Use when changing, fixing or extending Matterportable (Matterport l
 
 # Working on Matterportable
 
-Claude can't run Unity or reach Matterport from a cloud container, but **it can run the Godot project** headless.
+Claude can't run Unity or reach Matterport's viewer from a cloud container, but **it can run the Godot and web
+versions** headless (Godot under xvfb, the web page in Playwright's Chromium) and download public spaces.
 The loop is:
 
 1. Change the code. If it's runtime behaviour, change both engines (table in CLAUDE.md).
@@ -16,6 +17,21 @@ The loop is:
 5. The user pastes back Console/Output text or diagnostics.
 
 Make every round count: verify thoroughly here, and ask the user for exactly the evidence you need.
+
+### Seeing the web version run
+
+```bash
+tools/web-check.sh                   # demo house in headless Chromium: inside (move 0 → 1), dollhouse, measure
+```
+
+```bash
+tools/web-check.sh --compare rGMMnZDh3Tf 6 && python3 tools/compare_alignment.py /tmp/matterportable-web
+```
+
+The page also reads URL parameters, the same as Godot's command line: `?open=<link|demo>&sweep=N&mode=…&view=N&goto=N&measure=1`.
+`window.mp.checks` reports the result. A check that hangs: `window.mp.settleState()` shows what the page is still
+waiting for. Headless rendering is all on the CPU, so the check runs Chromium on Mesa under xvfb with `aa=0&aniso=1`
+(multisampling and anisotropic filtering off). Those cut a 131 s check to 24 s; real browsers keep both on.
 
 ### Seeing the Godot version run
 
@@ -81,6 +97,10 @@ tools/check.sh
 | Project setup, URP, startup warnings | `Assets/Editor/MatterportProjectSetup.cs` |
 | Measure mode: clicks, snapping, Shift/Alt, units, labels, what shows where | Core `Runtime/Core/Measurement.cs` (`MeasureTool`, `MeshFeatures`) + `Tests/Core/MeasurementTests.cs`; drawing and panel in `Navigation/MatterportMeasure.cs` (Unity) and `godot/scripts/MatterportMeasure.cs` |
 | Clicks go through UI, or Escape opens the menu while measuring | `MpGui.Block` / `BlockedGuiRects` (cleared in the navigator's `LateUpdate`), `MatterportMeasure.OwnsEscape`; Godot: `SetInputAsHandled` in `MatterportMeasure._UnhandledInput` |
+| Web: anything above | same name in `web/client/js/` (table in CLAUDE.md); server in `web/server/`, Core bridge in `web/wasm/Bridge.cs` |
+| Web: blank page, "Failed to fetch", 404 on `_framework` | the server must be built (`dotnet build web/server` publishes the WebAssembly Core into its wwwroot); page errors are in the browser console and in `tools/web-check.sh` output |
+| Web: space never opens | the server's job status (`api/spaces/<id>/status`), `MatterportCache/<id>/web/` (delete it to rebuild the bundle) |
+| Web: slow page start | WebAssembly runs the Core interpreted: never build BVHs or features in the page. Add server-side precomputation to `WebBundle` instead |
 | Godot: anything above | same name under `godot/scripts/` (see the table in CLAUDE.md); shaders in `godot/shaders/` |
 | Godot: "missing dependencies: Launcher.cs" | the user opened it with the standard (non-.NET) Godot; `main.gd` now says so on screen |
 | Godot: "dotnet not found", C# build, project won't open | `godot/Matterportable.csproj` (SDK 4.4.0, links Core), `project.godot` (`dotnet/project/assembly_name`) |

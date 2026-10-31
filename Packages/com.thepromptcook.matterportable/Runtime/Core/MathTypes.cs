@@ -257,6 +257,17 @@ namespace Matterportable.Core
 
     public static class Frames
     {
+        /// <summary>
+        /// A sweep's WorldFromPano as the proper rotation every engine's shader uses: orthonormalised the way Unity's
+        /// Quaternion.LookRotation(column 2, column 1) does it (columns: right, up, forward).
+        /// </summary>
+        public static Mat3 ShaderRotation(Mat3 m)
+        {
+            var f = m.Column(2).Normalized;
+            var r = Vec3.Cross(m.Column(1), f).Normalized;
+            return Mat3.FromColumns(r, Vec3.Cross(f, r), f);
+        }
+
         public static Mat3 ToUnity(CoordinateFrame f)
         {
             switch (f)

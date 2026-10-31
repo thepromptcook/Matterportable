@@ -1,6 +1,6 @@
 # Matterportable
 
-Turn a Matterport link into a navigable, photoreal environment in **Unity** or **Godot 4**.
+Turn a Matterport link into a navigable, photoreal environment in **Unity**, **Godot 4** or a **web browser**.
 
 Paste `https://discover.matterport.com/space/rGMMnZDh3Tf` (or any Matterport link or model ID), press Play, and walk
 the space the way Matterport does. Click to move between 360° capture points (sweeps) with the same cross-fading
@@ -17,6 +17,10 @@ with Matterport's measurement tool.
 >
 > - The Godot project is compiled, then run headless on the demo house with screenshots of the Inside and
 >   Dollhouse views and of measure mode.
+>
+> - The web version is built, served and driven in headless Chromium, with screenshots of the demo house (move,
+>   Dollhouse, measure mode).
+> - On four real Matterport spaces, the Godot and web versions both line up photo and mesh (`--compare`).
 >
 > A PlayMode test covers loading and navigation inside Unity.
 
@@ -57,6 +61,29 @@ behave the same way.
 
 Spaces download to the same `MatterportCache/` folder Unity uses, so a space downloaded in one engine opens instantly in
 the other. The controls are the same as in Unity; Esc returns to the menu.
+
+## Quick start (web browser)
+
+```bash
+dotnet run --project web/server
+```
+
+Then open **http://localhost:8080**. You get the same start menu, controls and measure tool as in Unity and Godot. The
+first run builds everything (about a minute). You need the .NET SDK (8 or newer).
+
+How it fits together:
+- **The server is needed.** Browsers can't fetch Matterport's data directly, so the small server (`web/server`)
+  downloads spaces into the same `MatterportCache/` the Unity and Godot projects use. It prepares each space once
+  and serves the page.
+- **The page** renders with three.js (WebGL 2). The shared C# Core runs inside it as WebAssembly (ray casts and the
+  measure tool), so measurements behave exactly as in the engines.
+- **Hosting it for others:** `dotnet publish web/server -c Release -o out` gives a self-contained folder. Run it
+  with:
+  - `ASPNETCORE_URLS` (address and port)
+  - `MATTERPORTABLE_CACHE` (where spaces are stored)
+  - `MATTERPORTABLE_ALLOW_DOWNLOADS=false`, to serve only spaces you put in the cache yourself
+
+  Only host spaces you own or have permission to share (see Responsible use).
 
 ### Use it in your own project
 
@@ -187,6 +214,8 @@ Packages/com.thepromptcook.matterportable/   the Unity package
 Assets/Editor/         project setup (URP, Input System, Launcher scene)
 godot/                 the Godot 4 (.NET) project: compiles Runtime/Core directly, plus Godot versions of the space,
                        panorama cache, navigator, HUD, launcher (scripts/) and shaders (shaders/)
+web/                   the web version: server/ (ASP.NET Core; downloads and prepares spaces with the Core),
+                       wasm/ (the Core as WebAssembly), client/ (three.js page: the same files as the engines, in JS)
 tools/                 check.sh, setup-dev.sh, godot-check.sh, CLI, test runner, Unity compile check, other checks
 CLAUDE.md, .claude/skills/   notes and skills that make future work with Claude Code faster
 ```
@@ -210,6 +239,7 @@ tools/check.sh
 - the browser export test
 - the shader compile
 - the Godot compile, plus a headless Godot run of the demo that saves screenshots (`tools/godot-check.sh`)
+- the web build, plus a headless Chromium run of the demo that saves screenshots (`tools/web-check.sh`)
 - `.meta` coverage
 - a dead-code scan
 
@@ -233,6 +263,8 @@ dotnet run --project tools/Matterportable.Cli -- diagnose MatterportCache/rGMMnZ
 
 - **Movement:** sweep-to-sweep only, like Matterport. There is no free walking, as requested.
 - **Render pipelines:** Built-in and URP are supported; HDRP is not. Godot: Forward+, Mobile and Compatibility.
+- **Web:** the server has no JPEG decoder, so it doesn't run the photo alignment solver. It uses Matterport's
+  layout (confirmed on every real space tested), or the calibration Unity or Godot saved for the space.
 - **Godot editor tools:** the Godot version has the in-game menu, navigation and HUD. The Unity inspector tools
   (alignment fixes, Copy Diagnostics) have no Godot equivalent yet; use the Unity inspector or the CLI `diagnose`
   command, which work on the same cache folder.

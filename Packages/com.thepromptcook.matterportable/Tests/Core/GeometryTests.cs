@@ -98,6 +98,17 @@ namespace Matterportable.Tests
         }
 
         [Test]
+        public void ShaderRotationKeepsRotationsAndFixesMirrors()
+        {
+            var q = new Quat(0.2, -0.4, 0.1, 0.9).Normalized.ToMat3();
+            var r = Frames.ShaderRotation(q);
+            for (int i = 0; i < 3; i++) Assert.Less((r.Column(i) - q.Column(i)).Length, 1e-5f);
+            var mirrored = Mat3.FromColumns(-q.Column(0), q.Column(1), q.Column(2));
+            var fixedUp = Frames.ShaderRotation(mirrored);
+            Assert.Less((fixedUp.Column(0) - q.Column(0)).Length, 1e-5f, "a mirrored basis becomes the proper rotation, like Unity");
+        }
+
+        [Test]
         public void QuaternionMatrixRoundTrip()
         {
             var rng = new Random(3);

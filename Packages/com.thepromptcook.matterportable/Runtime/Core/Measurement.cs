@@ -105,13 +105,15 @@ namespace Matterportable.Core
         MeasureView _view;
         float _clip = float.PositiveInfinity;
 
-        public MeasureTool(SpaceGeometry geo)
+        /// <param name="features">Precomputed snapping features (the web viewer gets them from the server); null
+        /// computes them on a worker.</param>
+        public MeasureTool(SpaceGeometry geo, MeshFeatures features = null)
         {
             _bvh = geo?.Bvh;
             double a = geo != null ? MeshFeatures.DominantWallAngle(geo) : 0;
             AxisX = new Vec3((float)Math.Cos(a), 0, (float)Math.Sin(a));
             AxisZ = new Vec3(-(float)Math.Sin(a), 0, (float)Math.Cos(a));
-            _features = geo != null ? Task.Run(() => MeshFeatures.Build(geo)) : Task.FromResult<MeshFeatures>(null);
+            _features = features != null || geo == null ? Task.FromResult(features) : Task.Run(() => MeshFeatures.Build(geo));
         }
 
         public static MeasureUnits DefaultUnits()
@@ -534,6 +536,35 @@ namespace Matterportable.Core
                 var dirs = kv.Value;
                 if (dirs.Count >= 3 || (dirs.Count == 2 && Math.Abs(Vec3.Dot(dirs[0], dirs[1])) < cosCorner))
                     f.AddCorner(welded[kv.Key]);
+            }
+            return f;
+        }
+
+        /// <summary>Edges and corners as bytes (little-endian floats), for <see cref="Deserialize"/>.</summary>
+        public byte[] Serialize()
+        {
+            using (var ms = new System.IO.MemoryStream())
+            using (var w = new System.IO.BinaryWriter(ms))
+            {
+                void Point(Vec3 p) { w.Write(p.X); w.Write(p.Y); w.Write(p.Z); }
+                w.Write(EdgeStart.Count);
+                w.Write(Corners.Count);
+                for (int i = 0; i < EdgeStart.Count; i++) { Point(EdgeStart[i]); Point(EdgeEnd[i]); }
+                foreach (var c in Corners) Point(c);
+                w.Flush();
+                return ms.ToArray();
+            }
+        }
+
+        public static MeshFeatures Deserialize(byte[] data)
+        {
+            var f = new MeshFeatures();
+            using (var r = new System.IO.BinaryReader(new System.IO.MemoryStream(data)))
+            {
+                Vec3 Point() => new Vec3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+                int edges = r.ReadInt32(), corners = r.ReadInt32();
+                for (int i = 0; i < edges; i++) f.AddEdge(Point(), Point());
+                for (int i = 0; i < corners; i++) f.AddCorner(Point());
             }
             return f;
         }

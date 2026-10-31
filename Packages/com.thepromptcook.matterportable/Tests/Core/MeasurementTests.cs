@@ -80,6 +80,30 @@ namespace Matterportable.Tests
             Assert.AreEqual(0f, (onEdge - new Vec3(1.5f, 0, 0)).Length, 1e-4f);
         }
 
+        [Test]
+        public void HierarchyAndFeaturesRoundTrip()
+        {
+            var geo = Room();
+            var idx = geo.Parts[0].Indices;
+            var restored = Bvh.FromHierarchy(geo.Positions, idx, geo.Bvh.SerializeHierarchy());
+            var rng = new Random(5);
+            for (int i = 0; i < 200; i++)
+            {
+                var o = new Vec3((float)rng.NextDouble() * 4, (float)rng.NextDouble() * 2.5f, (float)rng.NextDouble() * 3);
+                var d = new Vec3((float)rng.NextDouble() - 0.5f, (float)rng.NextDouble() - 0.5f, (float)rng.NextDouble() - 0.5f).Normalized;
+                Assert.AreEqual(geo.Bvh.Raycast(o, d, 50, out var a), restored.Raycast(o, d, 50, out var b));
+                Assert.AreEqual(a.Distance, b.Distance, 1e-5f);
+                Assert.AreEqual(a.Triangle, b.Triangle);
+            }
+            var features = MeshFeatures.Build(geo);
+            var back = MeshFeatures.Deserialize(features.Serialize());
+            Assert.AreEqual(features.Corners.Count, back.Corners.Count);
+            Assert.AreEqual(features.EdgeStart.Count, back.EdgeStart.Count);
+            Assert.IsTrue(back.NearestCorner(new Vec3(3.98f, 2.48f, 0.02f), 0.1f, out var corner));
+            Assert.AreEqual(0f, (corner - new Vec3(4, 2.5f, 0)).Length, 1e-4f);
+            Assert.IsTrue(new MeasureTool(geo, back).FeaturesReady, "precomputed features are ready at once");
+        }
+
         [TestCase(0)]
         [TestCase(20)]
         [TestCase(-30)]

@@ -35,6 +35,8 @@ records the decisions behind it and the order that worked.
   and no deprecation warnings, but the package should also run on 2021.3+ and the Built-in pipeline.
 - **Second engine:** Godot 4 (.NET build) on Windows, working "the same way from the same links". It is imported
   with *Import Existing Project* from `godot/project.godot`.
+- **Third version:** a web browser, deployable for others later. It is a server plus page, with the Core running in
+  the page as WebAssembly so behaviour is identical.
 
 ## Constraints that shape the design
 
@@ -111,6 +113,14 @@ Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; sc
      `tools/compare_alignment.py`), with a negative control: break the calibration and confirm it fails.
    - Check floor-to-ceiling heights for scale.
    - Make the convention found on every real space the default.
+9c. **Web version:**
+   - The browser can't call Matterport (no CORS), so an ASP.NET Core server reuses the Core to download spaces and
+     prepare a per-space bundle.
+   - The page uses three.js, with GLSL ported from the Godot shaders.
+   - The Core is compiled to WebAssembly with `Microsoft.NET.Sdk.WebAssembly` (no workload).
+   - Measure first: interpreted WebAssembly was about 25× slower than native, so ship the BVH and features from the
+     server.
+   - Check: `tools/web-check.sh` (Playwright screenshots), and `--compare` on real spaces.
 9b. **Godot port** (after Unity works, or in parallel once the Core is done):
    - Create the .NET project linking the Core, then port the runtime file by file and the shaders function by
      function.
@@ -161,6 +171,16 @@ Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; sc
   - Escape is shared with the launcher's menu: make the measure tool own it while open.
   - Godot's `Input.ParseInputEvent` is delivered on a later frame, so script multi-step input checks across frames.
   - A C# local function can't capture a `ref` parameter; copy it to a local first.
+- **Web:**
+  - three r169 GLSL3 `ShaderMaterial`s don't get `gl_FragColor`; declare `layout(location = 0) out vec4`.
+  - Sampler arrays can't be indexed by a run-time value in WebGL 2: use six samplers and a branch.
+  - `ImageBitmap` ignores `texture.flipY`; decode with `imageOrientation: 'flipY'`.
+  - Target `net$(BundledNETCoreAppTargetFrameworkVersion)` with `RollForward=LatestMajor`, so the user's .NET 10 SDK
+    builds and runs it without .NET 8 installed.
+  - XML comments in csproj can't contain `--` (bit twice).
+  - Headless browser checks render on the CPU: use Mesa through xvfb (not SwiftShader) and turn off MSAA and
+    anisotropy for them. Otherwise "wait until loaded" checks crawl at 2 fps.
+  - Draw the sky box last at the far plane (`gl_Position.xyww`, depth test on), not first under everything.
 - **Godot:**
   - It needs its **.NET build** and `dotnet` on PATH; otherwise it crashes on start ("Failed to load hostfxr").
   - Opening the project **rewrites the csproj SDK version** to the editor's version, so commit an old one (4.4.0)

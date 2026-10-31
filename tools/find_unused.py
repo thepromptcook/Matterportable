@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lists public/internal members of the package that nothing references (dead code). Exit 1 if any are found.
 
-A name counts as used if it appears anywhere else in the C# sources (tests and tools included). Some names are
+A name counts as used if it appears anywhere else in the C# sources (tests and tools included) or the web client. Some names are
 used by Unity or by callers outside this repo; list those in ALLOWED.
 Usage: python3 tools/find_unused.py
 """
@@ -24,7 +24,9 @@ DECL = re.compile(r"(?:public|internal)\s+(?:static\s+|readonly\s+|override\s+|s
 
 def main():
     files = [p for p in ROOT.rglob("*.cs") if "/bin/" not in str(p) and "/obj/" not in str(p)]
-    text = "\n".join(p.read_text() for p in files)
+    # The web client calls the WebAssembly Core's [JSExport] methods from JavaScript.
+    scripts = list((ROOT / "web" / "client" / "js").glob("*.js"))
+    text = "\n".join(p.read_text() for p in files + scripts)
     unused = []
     for p in files:
         rel = p.relative_to(ROOT).as_posix()
