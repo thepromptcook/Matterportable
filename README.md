@@ -23,7 +23,7 @@ transition, drag to look around, step with W/A/S/D, and switch to Dollhouse or F
 
 ## Quick start
 
-1. Open this folder as a project in **Unity 2021.3 LTS or newer** (Unity 6 recommended; Built-in or URP).
+1. Open this folder as a project in **Unity 6000.5.0f1** (2021.3 LTS or newer also works; Built-in or URP).
 2. **Window ▸ Matterportable ▸ Import Space**.
 3. Paste the link, keep **Panorama quality: High (2048 px)**, then click **Download & Create Scene**.
 4. Press **Play**.

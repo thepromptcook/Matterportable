@@ -119,10 +119,12 @@ namespace Matterportable.Editor
         [MenuItem("Tools/Matterportable/Enable Fast Enter Play Mode", priority = 20)]
         public static void EnableFastEnterPlayMode()
         {
+#if !UNITY_6000_0_OR_NEWER
 #pragma warning disable CS0618
             EditorSettings.enterPlayModeOptionsEnabled = true;
-            EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.DisableDomainReload;
 #pragma warning restore CS0618
+#endif
+            EditorSettings.enterPlayModeOptions = EnterPlayModeOptions.DisableDomainReload;
             Debug.Log("[Matterportable] Enter Play Mode Options: domain reload disabled - entering Play mode is now near-instant.");
         }
 
