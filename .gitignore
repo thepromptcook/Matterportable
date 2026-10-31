@@ -1,0 +1,36 @@
+# Unity
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+*.csproj
+*.sln
+*.suo
+*.user
+*.pidb
+*.booproj
+*.unityproj
+.vs/
+.idea/
+.vscode/
+*.pdb
+*.mdb
+*.apk
+*.aab
+*.unitypackage
+crashlytics-build.properties
+
+# Downloaded Matterport spaces (large, re-downloadable; can contain third-party content)
+/MatterportCache/
+/Assets/StreamingAssets/Matterport/
+/Assets/StreamingAssets/Matterport.meta
+
+# dotnet tool builds
+/tools/**/bin/
+/tools/**/obj/
+!/tools/**/*.csproj

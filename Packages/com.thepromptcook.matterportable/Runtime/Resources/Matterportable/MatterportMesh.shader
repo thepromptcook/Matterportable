@@ -1,0 +1,97 @@
+// Renders the scanned mesh. Inside: the current sweep's panorama is projected onto the geometry (exactly the
+// photo when the camera sits at the sweep) and cross-faded to the next sweep during moves, with occlusion
+// awareness. Dollhouse/floor plan: the baked mesh texture. Unlit - all lighting is in the photos.
+// Works in the Built-in pipeline and URP.
+Shader "Matterportable/Mesh"
+{
+    Properties
+    {
+        _MainTex ("Mesh Texture", 2D) = "gray" {}
+        [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull", Float) = 0
+    }
+    SubShader
+    {
+        Tags { "RenderType" = "Opaque" "Queue" = "Geometry" }
+        LOD 100
+
+        Pass
+        {
+            Cull [_Cull]
+            ZWrite On
+            ZTest LEqual
+
+            CGPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #pragma target 3.5
+            #pragma require 2darray
+            #include "UnityCG.cginc"
+            #include "MatterportCommon.hlsl"
+
+            sampler2D _MainTex;
+            float4 _MainTex_ST;
+
+            struct v2f
+            {
+                float4 pos : SV_POSITION;
+                float2 uv : TEXCOORD0;
+                float3 wpos : TEXCOORD1;
+            };
+
+            v2f vert (appdata_base v)
+            {
+                v2f o;
+                o.pos = UnityObjectToClipPos(v.vertex);
+                o.wpos = mul(unity_ObjectToWorld, v.vertex).xyz;
+                o.uv = TRANSFORM_TEX(v.texcoord, _MainTex);
+                return o;
+            }
+
+            fixed4 frag (v2f i) : SV_Target
+            {
+                float3 tex = tex2D(_MainTex, i.uv).rgb;
+
+                float3 dA = i.wpos - _MP_PosA.xyz;
+                float3 dB = i.wpos - _MP_PosB.xyz;
+                float3 lA = mul((float3x3)_MP_RotA, dA);
+                float3 lB = mul((float3x3)_MP_RotB, dB);
+                float3 lAdx = ddx(lA), lAdy = ddy(lA);
+                float3 lBdx = ddx(lB), lBdy = ddy(lB);
+
+                float3 coord;
+                float2 gx, gy;
+                MP_PanoCoords(lA, lAdx, lAdy, coord, gx, gy);
+                float3 cA = _MP_PanoA.SampleGrad(sampler_MP_PanoA, coord, gx, gy).rgb;
+                MP_PanoCoords(lB, lBdx, lBdy, coord, gx, gy);
+                float3 cB = _MP_PanoB.SampleGrad(sampler_MP_PanoB, coord, gx, gy).rgb;
+
+                float visA = _MP_Valid.x;
+                float visB = _MP_Valid.y;
+                if (_MP_State.z > 0.5)
+                {
+                    float3 sA = mul((float3x3)_MP_SpaceRot, dA);
+                    float3 sB = mul((float3x3)_MP_SpaceRot, dB);
+                    visA *= MP_Visibility(_MP_DepthA.SampleLevel(sampler_MP_DepthA, MP_DepthCoord(sA), 0).r, length(dA));
+                    visB *= MP_Visibility(_MP_DepthB.SampleLevel(sampler_MP_DepthB, MP_DepthCoord(sB), 0).r, length(dB));
+                }
+
+                float wA, wB;
+                MP_BlendWeights(_MP_State.x, visA, visB, wA, wB);
+                float3 pano = (cA * wA + cB * wB) / max(wA + wB, 1e-5);
+                float coverage = saturate(max(visA, visB));
+                float3 col = lerp(tex, lerp(tex, pano, coverage), _MP_State.y);
+
+                int view = (int)(_MP_State.w + 0.5);
+                if (view == 1) col = tex;
+                else if (view == 2) col = pano;
+                else if (view == 3) col = float3(visA, visB, 0);
+                else if (view == 4) col = float3(wA, wB, 1 - coverage);
+
+                clip(_MP_Valid.z - i.wpos.y);
+                return fixed4(col, 1);
+            }
+            ENDCG
+        }
+    }
+    Fallback Off
+}
