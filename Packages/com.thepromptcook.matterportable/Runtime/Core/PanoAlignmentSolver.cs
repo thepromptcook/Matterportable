@@ -431,6 +431,7 @@ namespace Matterportable.Core
             if (!r.Success)
             {
                 log?.Warn("Panorama alignment could not be solved; using the default layout. " + string.Join(" ", r.Report));
+                cal.Method = SpaceCalibration.Unsolved;
                 cal.Notes.Add("solver failed: " + string.Join(" ", r.Report));
                 return cal;
             }
@@ -438,6 +439,7 @@ namespace Matterportable.Core
             {
                 log?.Warn($"Panorama alignment is uncertain (score {r.Score:0.00}); keeping the default layout. " +
                           "Check the view and adjust it in the MatterportSpace inspector if panoramas look misaligned.");
+                cal.Method = SpaceCalibration.Unsolved;
                 cal.Notes.Add($"solver score {r.Score:0.000} below threshold; default kept");
                 cal.Score = r.Score;
                 return cal;
@@ -445,7 +447,7 @@ namespace Matterportable.Core
             cal.Rotation = r.Rotation;
             cal.Faces = r.Faces;
             cal.FlipTextureV = r.FlipTextureV;
-            cal.Method = "solver";
+            cal.Method = SpaceCalibration.Solver;
             cal.Score = r.Score;
             cal.Margin = r.Margin;
             cal.SweepsUsed = r.SweepsUsed;

@@ -16,8 +16,6 @@ namespace Matterportable.Core
         static readonly string[] IdQueryKeys = { "m", "model", "modelid", "model_id", "space", "spaceid", "sid" };
         static readonly string[] PathKeywords = { "space", "spaces", "models", "model", "show", "tour", "tours", "embed", "m", "s" };
 
-        public static bool IsModelId(string s) => s != null && StrictId.IsMatch(s);
-
         public static string ShowcaseUrl(string modelId) => "https://my.matterport.com/show/?m=" + modelId;
 
         /// <summary>Returns the model ID or throws <see cref="ArgumentException"/> with a user-facing message.</summary>

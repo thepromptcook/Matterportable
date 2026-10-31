@@ -30,6 +30,8 @@ Commands:
         Export the mesh (with materials) as OBJ for inspection in Blender etc.
   align <space dir>
         Run the panorama alignment solver (PNG spaces only; JPEG spaces are aligned inside Unity).
+  diagnose <space dir>
+        Print the diagnostics report (same as Copy Diagnostics in Unity; signed links redacted).
   query <link>
         Print the GraphQL query the importer sends.
   browser-script [link]
@@ -62,6 +64,9 @@ Commands:
                         case "info": return Info(opts);
                         case "obj": return Obj(opts);
                         case "align": return Align(opts, log, cts.Token);
+                        case "diagnose":
+                            Console.WriteLine(Diagnostics.Report(opts.Positional(0, "space dir"), "matterportable CLI"));
+                            return 0;
                         case "query":
                             Console.WriteLine(MatterportQueries.ModelQuery(MatterportLink.ParseModelId(opts.Positional(0, "link"))).Render());
                             return 0;

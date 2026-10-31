@@ -88,9 +88,6 @@ namespace Matterportable.Core
             Canonical[(int)SignedAxis.NegY],
         };
 
-        /// <summary>Layout where image i is canonical face i (used for depth maps and synthetic data).</summary>
-        public static FaceBasis[] CanonicalLayout() => (FaceBasis[])Canonical.Clone();
-
         /// <summary>Selects the canonical face for a direction and returns image coordinates (s right, t up).</summary>
         public static int Select(Vec3 d, out float s, out float t)
         {
@@ -172,14 +169,24 @@ namespace Matterportable.Core
         public RotationMode Rotation = RotationMode.Direct;
         public FaceBasis[] Faces = CubeFaces.DefaultMatterportLayout();
 
-        /// <summary>"default", "solver", "synthetic" or "manual".</summary>
-        public string Method = "default";
+        // How the calibration was obtained. Only "default" (never attempted) triggers an automatic solve on load.
+        public const string Default = "default";
+        public const string Solver = "solver";
+        public const string Unsolved = "unsolved";
+        public const string Manual = "manual";
+        public const string Synthetic = "synthetic";
+
+        /// <summary><see cref="Default"/>, <see cref="Solver"/>, <see cref="Unsolved"/>, <see cref="Manual"/> or <see cref="Synthetic"/>.</summary>
+        public string Method = Default;
         public double Score = double.NaN;
         public double Margin = double.NaN;
         public int SweepsUsed;
         public List<string> Notes = new List<string>();
 
-        public bool IsSolved => Method == "solver" || Method == "synthetic" || Method == "manual";
+        public bool IsSolved => Method == Solver || Method == Synthetic || Method == Manual;
+
+        /// <summary>True until the solver has run once (failed runs are not repeated automatically).</summary>
+        public bool NeedsSolve => Method == Default;
 
         public SpaceCalibration Clone()
         {
@@ -228,7 +235,7 @@ namespace Matterportable.Core
                 SweepFrame = Frames.FromToken(j["sweepFrame"].AsString()),
                 FlipTextureV = j["flipTextureV"].AsBool(),
                 FlipWinding = j["flipWinding"].AsBool(),
-                Method = j["method"].AsString("default"),
+                Method = j["method"].AsString(Default),
                 Score = j["score"].IsNull ? double.NaN : j["score"].AsDouble(),
                 Margin = j["margin"].IsNull ? double.NaN : j["margin"].AsDouble(),
                 SweepsUsed = j["sweepsUsed"].AsInt(),

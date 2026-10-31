@@ -31,8 +31,10 @@ namespace Matterportable
         public int SelectedFloor => _floor;
         public int HoverSweep { get; private set; } = -1;
         public bool AutoTour { get; set; }
-        public float FieldOfView => _fov;
-        /// <summary>Screen rectangles (GUI coordinates, y down) where clicks belong to the HUD.</summary>
+        /// <summary>
+        /// Screen rectangles (GUI coordinates, y down) where clicks belong to UI. Filled while UI draws
+        /// (<see cref="MpGui.Block"/>), consumed and cleared by the next Update.
+        /// </summary>
         public readonly List<Rect> BlockedGuiRects = new List<Rect>();
 
         public event Action<int> ArrivedAtSweep;
@@ -109,14 +111,7 @@ namespace Matterportable
             _markers = null;
         }
 
-        static MatterportSpace FindSpace()
-        {
-#if UNITY_2023_1_OR_NEWER
-            return FindAnyObjectByType<MatterportSpace>();
-#else
-            return FindObjectOfType<MatterportSpace>();
-#endif
-        }
+        static MatterportSpace FindSpace() => MpUtil.FindFirst<MatterportSpace>();
 
         void OnSpaceLoaded(MatterportSpace s)
         {
@@ -214,7 +209,11 @@ namespace Matterportable
                 space = FindSpace();
                 if (space != null) space.Loaded += OnSpaceLoaded;
             }
-            if (!Ready) return;
+            if (!Ready)
+            {
+                BlockedGuiRects.Clear();
+                return;
+            }
             if (!_initialised) OnSpaceLoaded(space);
             NavInput.BeginFrame();
             float dt = Time.unscaledDeltaTime;
@@ -229,6 +228,7 @@ namespace Matterportable
             UpdateTour();
             PushView();
             DrawMarkers();
+            BlockedGuiRects.Clear();
         }
 
         void HandleKeys(float dt)

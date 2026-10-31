@@ -3,10 +3,12 @@
 
 Unity needs a .meta next to every file and folder of a package that is installed from a git URL (immutable),
 so the repository ships them. Run this after adding files outside Unity: python3 tools/generate_metas.py
-Existing .meta files are never modified.
+Existing .meta files are never modified. With --check, nothing is written: exits 1 if any .meta is missing
+or orphaned (used by tools/check.sh).
 """
 import hashlib
 import pathlib
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PACKAGE = ROOT / "Packages/com.thepromptcook.matterportable"
@@ -42,6 +44,8 @@ def template_for(path: pathlib.Path) -> str:
 
 
 def main():
+    check = "--check" in sys.argv
+    problems = 0
     created = 0
     for path in sorted(PACKAGE.rglob("*")):
         if path.suffix == ".meta" or hidden(path):
@@ -49,14 +53,23 @@ def main():
         meta = path.with_name(path.name + ".meta")
         if meta.exists():
             continue
+        if check:
+            print("missing .meta:", meta.relative_to(ROOT))
+            problems += 1
+            continue
         meta.write_text(f"fileFormatVersion: 2\nguid: {guid_for(path)}\n" + template_for(path))
         created += 1
-    # Orphaned metas (file deleted) confuse Unity; report them.
+    # Orphaned metas (file deleted) confuse Unity.
     for meta in PACKAGE.rglob("*.meta"):
         if not meta.with_name(meta.name[:-5]).exists():
-            print("orphaned:", meta.relative_to(ROOT))
+            print("orphaned .meta:", meta.relative_to(ROOT))
+            problems += 1
+    if check:
+        print("all package files have .meta files" if problems == 0 else f"{problems} .meta problem(s); run python3 tools/generate_metas.py")
+        return 1 if problems else 0
     print(f"created {created} .meta file(s)")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -72,6 +72,8 @@ namespace Matterportable.Editor
                 {
                     if (GUILayout.Button("Rebuild Preview")) space.BuildEditorPreview();
                     if (GUILayout.Button("Open Folder")) MatterportSceneBuilder.Reveal(dir);
+                    if (GUILayout.Button(new GUIContent("Copy Diagnostics", "Copies a report to paste when asking for help with this space.")))
+                        MatterportSceneBuilder.CopyDiagnostics(dir);
                 }
             }
             using (new EditorGUILayout.HorizontalScope())
@@ -87,7 +89,7 @@ namespace Matterportable.Editor
             _aligning = true;
             try
             {
-                var cal = await MatterportSceneBuilder.AlignAsync(dir, UnityLog.Instance, CancellationToken.None, force: true);
+                var cal = await CalibrationRunner.RunAsync(dir, UnityLog.All, CancellationToken.None, force: true);
                 Debug.Log($"[Matterportable] Alignment: {cal.Method}, score {cal.Score:0.00}, rotation {cal.Rotation}.");
                 if (space != null) space.Reload();
             }
@@ -118,19 +120,12 @@ namespace Matterportable.Editor
                 }
                 nav.AutoTour = EditorGUILayout.Toggle("Auto tour", nav.AutoTour);
             }
-            space.DebugView = EditorGUILayout.Popup("Render view", space.DebugView, new[] { "Final", "Mesh texture", "Panorama only", "Visibility A/B", "Blend weights" });
+            space.DebugView = EditorGUILayout.Popup("Render view", space.DebugView, MatterportSpace.DebugViewNames);
             if (GUILayout.Button("Reload Space")) space.Reload();
             Repaint();
         }
 
-        static MatterportNavigator FindNavigator()
-        {
-#if UNITY_2023_1_OR_NEWER
-            return FindAnyObjectByType<MatterportNavigator>();
-#else
-            return FindObjectOfType<MatterportNavigator>();
-#endif
-        }
+        static MatterportNavigator FindNavigator() => MpUtil.FindFirst<MatterportNavigator>();
 
         void DrawInfo(MatterportSpace space)
         {
@@ -279,7 +274,7 @@ namespace Matterportable.Editor
 
         static void Commit(MatterportSpace space, SpaceCalibration cal, bool geometryChanged)
         {
-            cal.Method = "manual";
+            cal.Method = SpaceCalibration.Manual;
             if (!string.IsNullOrEmpty(space.SpaceDir)) cal.Save(space.SpaceDir);
             if (Application.isPlaying && !geometryChanged) space.SetCalibration(cal, false);
             else space.Reload();

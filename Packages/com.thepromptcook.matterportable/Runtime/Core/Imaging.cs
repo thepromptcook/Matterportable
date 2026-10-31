@@ -116,15 +116,6 @@ namespace Matterportable.Core
             set => Pixels[y * Width + x] = value;
         }
 
-        /// <summary>Builds from 8-bit RGB(A) pixels laid out bottom-up (e.g. Unity's GetPixels32 as bytes).</summary>
-        public static LumaImage FromRgba32(byte[] rgba, int width, int height, int channels = 4)
-        {
-            var l = new LumaImage(width, height);
-            for (int i = 0, p = 0; i < l.Pixels.Length; i++, p += channels)
-                l.Pixels[i] = (0.299f * rgba[p] + 0.587f * rgba[p + 1] + 0.114f * rgba[p + 2]) / 255f;
-            return l;
-        }
-
         /// <summary>Box-filtered downsample to the given size (sizes need not divide evenly).</summary>
         public LumaImage Resize(int width, int height)
         {

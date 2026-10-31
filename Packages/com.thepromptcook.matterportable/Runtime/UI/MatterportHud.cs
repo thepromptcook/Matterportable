@@ -23,23 +23,12 @@ namespace Matterportable
         Camera _cam;
         float _fps, _frameMs;
         float _shownAt;
-        GUIStyle _panel, _label, _small, _button, _buttonOn, _center;
-        Texture2D _panelTex, _buttonTex, _buttonOnTex;
-
-        static readonly string[] DebugViews = { "Final", "Mesh texture", "Panorama only", "Visibility A/B", "Blend weights" };
 
         void Awake()
         {
             _nav = GetComponent<MatterportNavigator>();
             _cam = GetComponent<Camera>();
             _shownAt = Time.unscaledTime;
-        }
-
-        void OnDestroy()
-        {
-            MpUtil.SafeDestroy(_panelTex);
-            MpUtil.SafeDestroy(_buttonTex);
-            MpUtil.SafeDestroy(_buttonOnTex);
         }
 
         void Update()
@@ -57,47 +46,13 @@ namespace Matterportable
             _frameMs = Mathf.Lerp(_frameMs, dt * 1000f, 0.05f);
         }
 
-        void EnsureStyles()
-        {
-            if (_panel != null) return;
-            _panelTex = Solid(new Color(0.08f, 0.08f, 0.09f, 0.78f));
-            _buttonTex = Solid(new Color(0.12f, 0.12f, 0.13f, 0.85f));
-            _buttonOnTex = Solid(new Color(0.95f, 0.95f, 0.95f, 0.95f));
-            _panel = new GUIStyle(GUI.skin.box) { normal = { background = _panelTex }, padding = new RectOffset(10, 10, 8, 8) };
-            _label = new GUIStyle(GUI.skin.label) { fontSize = 13, normal = { textColor = Color.white }, richText = true, wordWrap = true };
-            _small = new GUIStyle(_label) { fontSize = 11 };
-            _center = new GUIStyle(_label) { alignment = TextAnchor.MiddleCenter };
-            _button = new GUIStyle(GUI.skin.button)
-            {
-                fontSize = 13,
-                normal = { background = _buttonTex, textColor = Color.white },
-                hover = { background = _buttonTex, textColor = new Color(0.8f, 0.9f, 1f) },
-                active = { background = _buttonOnTex, textColor = Color.black },
-                padding = new RectOffset(10, 10, 6, 6),
-            };
-            _buttonOn = new GUIStyle(_button)
-            {
-                normal = { background = _buttonOnTex, textColor = Color.black },
-                hover = { background = _buttonOnTex, textColor = Color.black },
-            };
-        }
-
-        static Texture2D Solid(Color c)
-        {
-            var t = new Texture2D(1, 1, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave };
-            t.SetPixel(0, 0, c);
-            t.Apply();
-            return t;
-        }
-
         void OnGUI()
         {
-            EnsureStyles();
-            if (Event.current.type == EventType.Layout) _nav.BlockedGuiRects.Clear();
+            MpGui.Ensure();
             var space = _nav.space;
             if (space == null)
             {
-                Panel(new Rect(12, 12, 420, 46), "No MatterportSpace in the scene. Add one via Window ▸ Matterportable ▸ Import.");
+                Panel(new Rect(12, 12, 420, 46), "No MatterportSpace in the scene. Press Esc for the menu, or use Window ▸ Matterportable ▸ Import Space.");
                 return;
             }
 
@@ -115,7 +70,7 @@ namespace Matterportable
             if (showStats) DrawStats(space);
             if (showSweepLabels) DrawSweepLabels(space);
             if (_nav.IsWaitingForPanorama)
-                GUI.Label(new Rect(Screen.width / 2f - 60, Screen.height / 2f + 30, 120, 22), "Loading…", _center);
+                GUI.Label(new Rect(Screen.width / 2f - 60, Screen.height / 2f + 30, 120, 22), "Loading…", MpGui.Center);
         }
 
         void DrawModeButtons(MatterportSpace space)
@@ -126,7 +81,7 @@ namespace Matterportable
             {
                 var r = new Rect(x, y, label.Length * 8 + 26, h);
                 Block(r);
-                if (GUI.Button(r, label, _nav.Mode == mode ? _buttonOn : _button)) _nav.SetMode(mode);
+                if (GUI.Button(r, label, _nav.Mode == mode ? MpGui.ButtonOn : MpGui.Button)) _nav.SetMode(mode);
                 x = r.xMax + 4;
             }
             if (_nav.Mode != MatterportNavigator.ViewMode.Inside && space.FloorCount > 1)
@@ -134,14 +89,14 @@ namespace Matterportable
                 x += 16;
                 var all = new Rect(x, y, 44, h);
                 Block(all);
-                if (GUI.Button(all, "All", _nav.SelectedFloor < 0 ? _buttonOn : _button)) _nav.SetFloor(-1);
+                if (GUI.Button(all, "All", _nav.SelectedFloor < 0 ? MpGui.ButtonOn : MpGui.Button)) _nav.SetFloor(-1);
                 x = all.xMax + 4;
                 for (int f = 0; f < space.FloorCount; f++)
                 {
                     var label = FloorLabel(space, f);
                     var r = new Rect(x, y, Mathf.Max(32, label.Length * 8 + 16), h);
                     Block(r);
-                    if (GUI.Button(r, label, _nav.SelectedFloor == f ? _buttonOn : _button)) _nav.SetFloor(f);
+                    if (GUI.Button(r, label, _nav.SelectedFloor == f ? MpGui.ButtonOn : MpGui.Button)) _nav.SetFloor(f);
                     x = r.xMax + 4;
                 }
             }
@@ -149,7 +104,7 @@ namespace Matterportable
             {
                 var r = new Rect(x + 12, y, 90, h);
                 Block(r);
-                if (GUI.Button(r, "■ Tour", _buttonOn)) _nav.AutoTour = false;
+                if (GUI.Button(r, "■ Tour", MpGui.ButtonOn)) _nav.AutoTour = false;
             }
         }
 
@@ -167,11 +122,11 @@ namespace Matterportable
         {
             const string hint = "Drag to look · Click to move · W A S D step · ←/→ turn · Wheel zoom · 1/2/3 Inside/Dollhouse/Floor plan · " +
                                 "[ ] prev/next · P tour · F1 stats · F2 render view · F3 labels · H hide";
-            var size = _small.CalcSize(new GUIContent(hint));
+            var size = MpGui.Small.CalcSize(new GUIContent(hint));
             float w = Mathf.Min(size.x + 24, Screen.width - 24);
             var r = new Rect((Screen.width - w) / 2f, 12, w, 30);
-            GUI.Box(r, GUIContent.none, _panel);
-            GUI.Label(new Rect(r.x + 12, r.y + 7, r.width - 24, 20), hint, _small);
+            GUI.Box(r, GUIContent.none, MpGui.Panel);
+            GUI.Label(new Rect(r.x + 12, r.y + 7, r.width - 24, 20), hint, MpGui.Small);
         }
 
         void DrawStats(MatterportSpace space)
@@ -209,15 +164,15 @@ namespace Matterportable
             if (cal != null)
                 sb.AppendFormat("Alignment: {0}{1}  rotation {2}\n", cal.Method,
                     double.IsNaN(cal.Score) ? "" : $" (score {cal.Score:0.00})", cal.Rotation);
-            sb.AppendFormat("Render view (F2): {0}\n", DebugViews[space.DebugView]);
+            sb.AppendFormat("Render view (F2): {0}\n", space.DebugViewName);
             sb.AppendFormat("Loaded in {0:0.0}s", space.LastLoadSeconds);
             var content = new GUIContent(sb.ToString());
             float w = 430;
-            float h = _small.CalcHeight(content, w - 20) + 16;
+            float h = MpGui.Small.CalcHeight(content, w - 20) + 16;
             var r = new Rect(12, 50, w, h);
             Block(r);
-            GUI.Box(r, GUIContent.none, _panel);
-            GUI.Label(new Rect(r.x + 10, r.y + 8, w - 20, h - 16), content, _small);
+            GUI.Box(r, GUIContent.none, MpGui.Panel);
+            GUI.Label(new Rect(r.x + 10, r.y + 8, w - 20, h - 16), content, MpGui.Small);
         }
 
         void DrawSweepLabels(MatterportSpace space)
@@ -227,27 +182,24 @@ namespace Matterportable
                 var sp = _cam.WorldToScreenPoint(space.MarkerWorldPosition(i) + Vector3.up * 0.25f);
                 if (sp.z <= 0 || sp.x < 0 || sp.x > Screen.width || sp.y < 0 || sp.y > Screen.height) continue;
                 var r = new Rect(sp.x - 18, Screen.height - sp.y - 10, 36, 20);
-                GUI.Box(r, GUIContent.none, _panel);
-                GUI.Label(r, i == _nav.CurrentSweep ? "<b>" + i + "</b>" : i.ToString(), _center);
+                GUI.Box(r, GUIContent.none, MpGui.Panel);
+                GUI.Label(r, i == _nav.CurrentSweep ? "<b>" + i + "</b>" : i.ToString(), MpGui.Center);
             }
         }
 
         void Panel(Rect r, string text)
         {
             Block(r);
-            GUI.Box(r, GUIContent.none, _panel);
-            GUI.Label(new Rect(r.x + 10, r.y + 8, r.width - 20, r.height - 16), text, _label);
+            GUI.Box(r, GUIContent.none, MpGui.Panel);
+            GUI.Label(new Rect(r.x + 10, r.y + 8, r.width - 20, r.height - 16), text, MpGui.Label);
         }
 
-        void DrawBar(Rect r, float t)
+        static void DrawBar(Rect r, float t)
         {
-            GUI.DrawTexture(r, _buttonTex);
-            GUI.DrawTexture(new Rect(r.x, r.y, r.width * Mathf.Clamp01(t), r.height), _buttonOnTex);
+            GUI.DrawTexture(r, MpGui.BarBack);
+            GUI.DrawTexture(new Rect(r.x, r.y, r.width * Mathf.Clamp01(t), r.height), MpGui.BarFill);
         }
 
-        void Block(Rect r)
-        {
-            if (Event.current.type == EventType.Repaint || Event.current.type == EventType.Layout) _nav.BlockedGuiRects.Add(r);
-        }
+        void Block(Rect r) => MpGui.Block(_nav, r);
     }
 }

@@ -23,7 +23,6 @@ namespace Matterportable.Core
         public Vec3 BoundsMin, BoundsMax;
 
         public bool HasUvs => Uvs != null && Uvs.Length == Positions.Length;
-        public Vec3 Center => (BoundsMin + BoundsMax) * 0.5f;
         public int TriangleCount => Bvh?.TriangleCount ?? 0;
 
         public static SpaceGeometry Build(MeshData mesh, SpaceCalibration cal)

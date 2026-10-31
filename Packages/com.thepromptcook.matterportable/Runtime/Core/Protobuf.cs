@@ -65,27 +65,12 @@ namespace Matterportable.Core
             return v;
         }
 
-        public ulong ReadFixed64()
-        {
-            ulong lo = ReadFixed32();
-            ulong hi = ReadFixed32();
-            return lo | hi << 32;
-        }
-
         public float ReadFloat()
         {
             Need(4);
             float f = BitConverter.ToSingle(_buf, _pos);
             _pos += 4;
             return f;
-        }
-
-        public double ReadDouble()
-        {
-            Need(8);
-            double d = BitConverter.ToDouble(_buf, _pos);
-            _pos += 8;
-            return d;
         }
 
         public ProtoReader ReadMessage()

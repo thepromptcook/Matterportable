@@ -6,18 +6,21 @@ using UnityEditor.PackageManager;
 using UnityEditor.PackageManager.Requests;
 using UnityEngine;
 using UnityEngine.Rendering;
+using EditorSceneManager = UnityEditor.SceneManagement.EditorSceneManager;
+using NewSceneMode = UnityEditor.SceneManagement.NewSceneMode;
+using NewSceneSetup = UnityEditor.SceneManagement.NewSceneSetup;
 
 /// <summary>
-/// One-time setup for this project on Unity 6, so it opens without deprecation warnings:
-/// installs URP and the Input System (versions matching your editor), creates and assigns a URP asset,
-/// switches Active Input Handling to the Input System, and turns off deprecated Dynamic Batching.
-/// Re-runs safely; does nothing once everything is configured. Tools ▸ Matterportable ▸ Configure Project.
+/// Project setup for Unity 6, run automatically on load (project-level, deliberately not part of the package):
+/// installs URP and the Input System (versions matching the editor), creates and assigns a URP asset, switches
+/// Active Input Handling to the Input System, turns off deprecated Dynamic Batching, and creates/opens the
+/// Launcher start scene once. Idempotent; Tools ▸ Matterportable ▸ Configure Project re-runs it.
 /// </summary>
 [InitializeOnLoad]
 static class MatterportProjectSetup
 {
-    const string SkipKey = "Matterportable.ProjectSetup.Skip";
-    const string OpenedImporterKey = "Matterportable.ProjectSetup.OpenedImporter";
+    const string LauncherOpenedKey = "Matterportable.ProjectSetup.OpenedImporter";
+    const string LauncherScene = "Assets/Matterport/Launcher.unity";
     const string UrpAssetType = "UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset, Unity.RenderPipelines.Universal.Runtime";
     const string UrpRendererType = "UnityEngine.Rendering.Universal.UniversalRendererData, Unity.RenderPipelines.Universal.Runtime";
     const string PostProcessDataType = "UnityEngine.Rendering.Universal.PostProcessData, Unity.RenderPipelines.Universal.Runtime";
@@ -32,18 +35,13 @@ static class MatterportProjectSetup
     }
 
     [MenuItem("Tools/Matterportable/Configure Project (URP + Input System)", priority = 0)]
-    static void RunFromMenu()
-    {
-        EditorPrefs.DeleteKey(SkipKey + ProjectKey);
-        Run(true);
-    }
+    static void RunFromMenu() => Run(true);
 
     static string ProjectKey => Application.dataPath;
 
     static void Run(bool interactive)
     {
         if (EditorApplication.isPlayingOrWillChangePlaymode || _request != null) return;
-        if (!interactive && EditorPrefs.GetBool(SkipKey + ProjectKey, false)) { OpenImporterOnce(); return; }
 
         bool needUrp = Type.GetType(UrpAssetType) == null;
         bool needInput = Type.GetType(InputSystemType) == null;
@@ -53,7 +51,7 @@ static class MatterportProjectSetup
 
         if (!(needUrp || needInput || needPipeline || needHandler || needBatching))
         {
-            OpenImporterOnce();
+            EnsureLauncherScene();
             if (interactive) Debug.Log("[Matterportable] Project already configured.");
             return;
         }
@@ -89,7 +87,7 @@ static class MatterportProjectSetup
         }
         AssetDatabase.SaveAssets();
         Debug.Log("[Matterportable] Project configured for Unity 6 (URP + Input System).");
-        OpenImporterOnce();
+        EnsureLauncherScene();
     }
 
     static void WaitForPackages()
@@ -102,26 +100,23 @@ static class MatterportProjectSetup
         _request = null;
     }
 
-    const string LauncherScene = "Assets/Matterport/Launcher.unity";
-
     /// <summary>Creates the start scene (in-game link menu) once, makes it the first build scene and opens it.</summary>
-    static void OpenImporterOnce()
+    static void EnsureLauncherScene()
     {
-        if (EditorPrefs.GetBool(OpenedImporterKey + ProjectKey, false)) return;
-        EditorPrefs.SetBool(OpenedImporterKey + ProjectKey, true);
+        if (EditorPrefs.GetBool(LauncherOpenedKey + ProjectKey, false)) return;
+        EditorPrefs.SetBool(LauncherOpenedKey + ProjectKey, true);
         if (!File.Exists(LauncherScene))
         {
-            if (!UnityEditor.SceneManagement.EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
-            var scene = UnityEditor.SceneManagement.EditorSceneManager.NewScene(
-                UnityEditor.SceneManagement.NewSceneSetup.EmptyScene, UnityEditor.SceneManagement.NewSceneMode.Single);
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             new GameObject("Matterport Launcher").AddComponent<Matterportable.MatterportLauncher>();
             Directory.CreateDirectory(Path.GetDirectoryName(LauncherScene));
-            UnityEditor.SceneManagement.EditorSceneManager.SaveScene(scene, LauncherScene);
+            EditorSceneManager.SaveScene(scene, LauncherScene);
         }
-        else if (UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene().path != LauncherScene)
+        else if (EditorSceneManager.GetActiveScene().path != LauncherScene)
         {
-            if (!UnityEditor.SceneManagement.EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
-            UnityEditor.SceneManagement.EditorSceneManager.OpenScene(LauncherScene);
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            EditorSceneManager.OpenScene(LauncherScene);
         }
         var scenes = new System.Collections.Generic.List<EditorBuildSettingsScene>(EditorBuildSettings.scenes);
         scenes.RemoveAll(sc => sc.path == LauncherScene);

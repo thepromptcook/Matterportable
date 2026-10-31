@@ -28,7 +28,7 @@ namespace Matterportable.Editor
         string _busy;
         CancellationTokenSource _cts;
         SpaceDownloader _downloader;
-        BufferLog _log = new BufferLog { Forward = UnityLog.Instance };
+        readonly BufferLog _log = new BufferLog { Forward = UnityLog.WarningsOnly };
         Vector2 _logScroll;
         string _lastResult;
         bool _showAdvanced;
@@ -105,6 +105,8 @@ namespace Matterportable.Editor
                     {
                         if (GUILayout.Button("Create Scene from Cache")) CreateSceneFor(modelId, _link, null);
                         if (GUILayout.Button("Re-run Alignment")) StartAlign(MatterportPaths.SpaceDir(_cacheFolder, modelId));
+                        if (GUILayout.Button(new GUIContent("Copy Diagnostics", "Copies a report to paste when asking for help with this space.")))
+                            MatterportSceneBuilder.CopyDiagnostics(MatterportPaths.SpaceDir(_cacheFolder, modelId));
                     }
                 }
                 EditorGUILayout.Space(4);
@@ -201,17 +203,11 @@ namespace Matterportable.Editor
                 using (var http = new HttpClientTransport())
                 {
                     _downloader = new SpaceDownloader(http, _log);
-                    var options = new DownloadOptions
-                    {
-                        PanoSizes = new[] { 512, PanoSizes[Mathf.Clamp(_panoQuality, 0, PanoSizes.Length - 1)] },
-                        TextureQuality = _highTextures ? "high" : "low",
-                        MaxSweeps = _maxSweeps,
-                    };
-                    manifest = await _downloader.DownloadAsync(modelId, dir, options, ct);
+                    manifest = await _downloader.DownloadAsync(modelId, dir, Options(), ct);
                 }
                 _downloader = null;
                 _busy = "Aligning panoramas";
-                await MatterportSceneBuilder.AlignAsync(dir, _log, ct);
+                await CalibrationRunner.RunAsync(dir, _log, ct);
                 RefreshSpacesInScene(modelId);
                 if (_createScene) CreateSceneFor(modelId, link, manifest.Name);
                 return $"Downloaded \"{manifest.Name}\": {manifest.Sweeps.Count} sweeps → {dir}";
@@ -222,7 +218,7 @@ namespace Matterportable.Editor
         {
             RunJob("Aligning panoramas", async ct =>
             {
-                var cal = await MatterportSceneBuilder.AlignAsync(spaceDir, _log, ct, force: true);
+                var cal = await CalibrationRunner.RunAsync(spaceDir, _log, ct, force: true);
                 RefreshSpacesInScene(null);
                 return $"Alignment: {cal.Method}" + (double.IsNaN(cal.Score) ? "" : $" (score {cal.Score:0.00})");
             });
@@ -233,10 +229,10 @@ namespace Matterportable.Editor
             int size = _demoFaceSize;
             RunJob("Generating demo space", async ct =>
             {
-                var dir = await MatterportSceneBuilder.GenerateDemoSpaceAsync(_cacheFolder, size, ct);
+                var dir = await DemoSpace.EnsureAsync(_cacheFolder, size, true, ct);
                 _log.Info("Demo space written to " + dir);
-                RefreshSpacesInScene(MatterportSceneBuilder.DemoModelId);
-                CreateSceneFor(MatterportSceneBuilder.DemoModelId, MatterportSceneBuilder.DemoModelId, "Matterportable Demo");
+                RefreshSpacesInScene(DemoSpace.ModelId);
+                CreateSceneFor(DemoSpace.ModelId, DemoSpace.ModelId, "Matterportable Demo");
                 return "Demo space ready. Press Play to explore it.";
             });
         }
@@ -251,23 +247,24 @@ namespace Matterportable.Editor
                 using (var http = new HttpClientTransport())
                 {
                     _downloader = new SpaceDownloader(http, _log);
-                    var options = new DownloadOptions
-                    {
-                        PanoSizes = new[] { 512, PanoSizes[Mathf.Clamp(_panoQuality, 0, PanoSizes.Length - 1)] },
-                        TextureQuality = _highTextures ? "high" : "low",
-                        MaxSweeps = _maxSweeps,
-                    };
-                    manifest = await _downloader.ImportExportAsync(File.ReadAllText(file), MatterportPaths.ResolveCacheRoot(_cacheFolder), options, ct);
+                    manifest = await _downloader.ImportExportAsync(File.ReadAllText(file), MatterportPaths.ResolveCacheRoot(_cacheFolder), Options(), ct);
                 }
                 _downloader = null;
                 var dir = MatterportPaths.SpaceDir(_cacheFolder, manifest.ModelId);
                 _busy = "Aligning panoramas";
-                await MatterportSceneBuilder.AlignAsync(dir, _log, ct);
+                await CalibrationRunner.RunAsync(dir, _log, ct);
                 _link = manifest.ModelId;
                 if (_createScene) CreateSceneFor(manifest.ModelId, manifest.ModelId, manifest.Name);
                 return $"Imported \"{manifest.Name}\": {manifest.Sweeps.Count} sweeps.";
             });
         }
+
+        DownloadOptions Options() => new DownloadOptions
+        {
+            PanoSizes = new[] { 512, PanoSizes[Mathf.Clamp(_panoQuality, 0, PanoSizes.Length - 1)] },
+            TextureQuality = _highTextures ? "high" : "low",
+            MaxSweeps = _maxSweeps,
+        };
 
         void CreateSceneFor(string modelId, string link, string name)
         {
@@ -282,14 +279,7 @@ namespace Matterportable.Editor
 
         static void RefreshSpacesInScene(string modelId)
         {
-#if UNITY_6000_5_OR_NEWER
-            var spaces = FindObjectsByType<MatterportSpace>();
-#elif UNITY_2023_1_OR_NEWER
-            var spaces = FindObjectsByType<MatterportSpace>(FindObjectsSortMode.None);
-#else
-            var spaces = FindObjectsOfType<MatterportSpace>();
-#endif
-            foreach (var s in spaces)
+            foreach (var s in MpUtil.FindAll<MatterportSpace>())
                 if (modelId == null || s.ModelId == modelId || (MatterportLink.TryParseModelId(s.link, out var id) && id == modelId))
                     s.Reload();
         }

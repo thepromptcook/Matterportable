@@ -58,7 +58,6 @@ namespace Matterportable.Core
         public List<PanoTier> Tiers = new List<PanoTier>();
 
         public PanoTier SmallestTier => Tiers.Count > 0 ? Tiers[0] : null;
-        public PanoTier LargestTier => Tiers.Count > 0 ? Tiers[Tiers.Count - 1] : null;
 
         /// <summary>Largest tier not exceeding maxSize (or the smallest tier if all are larger).</summary>
         public PanoTier TierAtMost(int maxSize)

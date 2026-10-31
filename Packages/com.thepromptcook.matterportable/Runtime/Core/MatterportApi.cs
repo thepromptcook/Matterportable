@@ -211,18 +211,17 @@ namespace Matterportable.Core
         static RemoteSweep ParseLocation(JsonValue loc, int ordinal)
         {
             var pano = loc["pano"];
-            if (!pano.IsObject) pano = loc["anchor"]["pano"];
             if (!pano.IsObject) return null;
 
             var placement = pano["placement"].AsString();
             if (string.Equals(placement, "unplaced", StringComparison.OrdinalIgnoreCase)) return null;
 
-            var position = ReadPoint(pano["position"]) ?? ReadPoint(loc["position"]) ?? ReadPoint(loc["anchor"]["position"]);
+            var position = ReadPoint(pano["position"]) ?? ReadPoint(loc["position"]);
             if (position == null) return null;
 
             var sweep = new RemoteSweep
             {
-                Id = loc["id"].AsString() ?? loc["anchor"]["id"].AsString() ?? pano["id"].AsString() ?? ordinal.ToString(CultureInfo.InvariantCulture),
+                Id = loc["id"].AsString() ?? pano["id"].AsString() ?? ordinal.ToString(CultureInfo.InvariantCulture),
                 Index = loc["index"].AsInt(ordinal),
                 Label = loc["label"].AsString() ?? pano["label"].AsString() ?? "",
                 FloorId = loc["floor"]["id"].AsString(),

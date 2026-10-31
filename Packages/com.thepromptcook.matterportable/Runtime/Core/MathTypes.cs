@@ -91,9 +91,6 @@ namespace Matterportable.Core
         public static Mat3 FromColumns(Vec3 c0, Vec3 c1, Vec3 c2) =>
             new Mat3(c0.X, c1.X, c2.X, c0.Y, c1.Y, c2.Y, c0.Z, c1.Z, c2.Z);
 
-        public static Mat3 FromRows(Vec3 r0, Vec3 r1, Vec3 r2) =>
-            new Mat3(r0.X, r0.Y, r0.Z, r1.X, r1.Y, r1.Z, r2.X, r2.Y, r2.Z);
-
         public Vec3 Column(int i) => i == 0 ? new Vec3(M00, M10, M20) : i == 1 ? new Vec3(M01, M11, M21) : new Vec3(M02, M12, M22);
         public Vec3 Row(int i) => i == 0 ? new Vec3(M00, M01, M02) : i == 1 ? new Vec3(M10, M11, M12) : new Vec3(M20, M21, M22);
 
@@ -138,8 +135,6 @@ namespace Matterportable.Core
                 return l > 1e-12 ? new Quat(X / l, Y / l, Z / l, W / l) : Identity;
             }
         }
-
-        public Quat Conjugate => new Quat(-X, -Y, -Z, W);
 
         public static Quat AxisAngle(Vec3 axis, double radians)
         {
@@ -226,9 +221,7 @@ namespace Matterportable.Core
             }
         }
 
-        public static SignedAxis Negate(this SignedAxis a) => (SignedAxis)((int)a ^ 1);
         public static int AxisIndex(this SignedAxis a) => (int)a >> 1;
-        public static bool IsPositive(this SignedAxis a) => ((int)a & 1) == 0;
 
         /// <summary>The signed axis closest to the given direction.</summary>
         public static SignedAxis FromVector(Vec3 v)

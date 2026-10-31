@@ -26,7 +26,7 @@ namespace Matterportable.Core
     {
         volatile string _stage = "Idle";
         volatile string _current = "";
-        int _done, _total, _failed, _skipped;
+        int _done, _total, _failed;
         long _bytes;
 
         public string Stage => _stage;
@@ -34,7 +34,6 @@ namespace Matterportable.Core
         public int FilesDone => Volatile.Read(ref _done);
         public int FilesTotal => Volatile.Read(ref _total);
         public int FilesFailed => Volatile.Read(ref _failed);
-        public int FilesSkipped => Volatile.Read(ref _skipped);
         public long Bytes => Interlocked.Read(ref _bytes);
         public float Fraction => FilesTotal > 0 ? Math.Min(1f, FilesDone / (float)FilesTotal) : 0f;
 
@@ -43,11 +42,10 @@ namespace Matterportable.Core
         internal void AddTotal(int n) => Interlocked.Add(ref _total, n);
         internal void AddBytes(long n) => Interlocked.Add(ref _bytes, n);
 
-        internal void FileFinished(bool ok, bool skipped)
+        internal void FileFinished(bool ok)
         {
             Interlocked.Increment(ref _done);
             if (!ok) Interlocked.Increment(ref _failed);
-            if (skipped) Interlocked.Increment(ref _skipped);
         }
 
         public override string ToString() =>
@@ -475,7 +473,7 @@ namespace Matterportable.Core
             if (!o.Overwrite && IoUtil.NonEmptyFileExists(path))
             {
                 item.Ok = true;
-                Status.FileFinished(true, true);
+                Status.FileFinished(true);
                 return;
             }
             Status.SetCurrent(item.RelPath);
@@ -491,7 +489,7 @@ namespace Matterportable.Core
                     {
                         item.Ok = true;
                         item.AuthFailed = false;
-                        Status.FileFinished(true, false);
+                        Status.FileFinished(true);
                         return;
                     }
                     item.LastStatus = r.Status;
@@ -503,7 +501,7 @@ namespace Matterportable.Core
                 allAuth &= authFailure;
             }
             item.AuthFailed = allAuth;
-            Status.FileFinished(false, false);
+            Status.FileFinished(false);
         }
 
         static string Describe(Item i) => i.LastError ?? ("HTTP " + i.LastStatus);

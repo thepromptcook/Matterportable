@@ -13,24 +13,25 @@ namespace Matterportable
         public static Quaternion ToQuaternion(this Mat3 m) =>
             Quaternion.LookRotation(m.Column(2).ToUnity(), m.Column(1).ToUnity());
 
-        public static Matrix4x4 ToMatrix(this Mat3 m)
-        {
-            var r = Matrix4x4.identity;
-            r.m00 = m.M00; r.m01 = m.M01; r.m02 = m.M02;
-            r.m10 = m.M10; r.m11 = m.M11; r.m12 = m.M12;
-            r.m20 = m.M20; r.m21 = m.M21; r.m22 = m.M22;
-            return r;
-        }
-
         public static Mat3 ToMat3(this Quaternion q) => Mat3.FromColumns(
             (q * Vector3.right).ToCore(), (q * Vector3.up).ToCore(), (q * Vector3.forward).ToCore());
     }
 
-    /// <summary>Forwards Core log messages to the Unity console (thread-safe).</summary>
+    /// <summary>
+    /// Forwards Core log messages to the Unity console (thread-safe). Info messages only appear with
+    /// <see cref="MatterportViewerSettings.verboseLogging"/>; every load also writes them to debug/load.log.
+    /// </summary>
     public sealed class UnityLog : ILogSink
     {
-        public static readonly UnityLog Instance = new UnityLog();
-        public bool Verbose = true;
+        public static readonly UnityLog All = new UnityLog(true);
+        public static readonly UnityLog WarningsOnly = new UnityLog(false);
+
+        public static UnityLog For(MatterportViewerSettings settings) =>
+            settings != null && settings.verboseLogging ? All : WarningsOnly;
+
+        readonly bool _verbose;
+
+        UnityLog(bool verbose) { _verbose = verbose; }
 
         public void Log(LogLevel level, string message)
         {
@@ -39,7 +40,7 @@ namespace Matterportable
                 case LogLevel.Error: Debug.LogError("[Matterportable] " + message); break;
                 case LogLevel.Warning: Debug.LogWarning("[Matterportable] " + message); break;
                 default:
-                    if (Verbose) Debug.LogFormat(LogType.Log, LogOption.NoStacktrace, null, "{0}", "[Matterportable] " + message);
+                    if (_verbose) Debug.LogFormat(LogType.Log, LogOption.NoStacktrace, null, "{0}", "[Matterportable] " + message);
                     break;
             }
         }
@@ -62,6 +63,37 @@ namespace Matterportable
             rt = null;
         }
 
+        /// <summary>First loaded object of a type (version-independent wrapper around Unity's find APIs).</summary>
+        public static T FindFirst<T>() where T : Object
+        {
+#if UNITY_2023_1_OR_NEWER
+            return Object.FindAnyObjectByType<T>();
+#else
+            return Object.FindObjectOfType<T>();
+#endif
+        }
+
+        /// <summary>All loaded objects of a type.</summary>
+        public static T[] FindAll<T>() where T : Object
+        {
+#if UNITY_6000_5_OR_NEWER
+            return Object.FindObjectsByType<T>();
+#elif UNITY_2023_1_OR_NEWER
+            return Object.FindObjectsByType<T>(FindObjectsSortMode.None);
+#else
+            return Object.FindObjectsOfType<T>();
+#endif
+        }
+
+        /// <summary>1x1 texture of a colour (for IMGUI backgrounds).</summary>
+        public static Texture2D Solid(Color c)
+        {
+            var t = new Texture2D(1, 1, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave };
+            t.SetPixel(0, 0, c);
+            t.Apply();
+            return t;
+        }
+
         /// <summary>Decodes an image file on the calling (main) thread into luminance for the alignment solver.</summary>
         public static LumaImage LoadLuma(string path)
         {
@@ -78,7 +110,7 @@ namespace Matterportable
             finally { SafeDestroy(tex); }
         }
 
-        /// <summary>Encodes a Core image as JPEG using Unity's encoder (used by the demo space generator).</summary>
+        /// <summary>Encodes a Core image as JPEG using Unity's encoder (used by the demo space).</summary>
         public static byte[] EncodeJpg(RgbImage img, int quality = 92)
         {
             var tex = new Texture2D(img.Width, img.Height, TextureFormat.RGB24, false);
@@ -92,6 +124,12 @@ namespace Matterportable
         }
 
         public static string FileUri(string path) => new System.Uri(Path.GetFullPath(path)).AbsoluteUri;
+
+        /// <summary>Unity/platform details prepended to diagnostics reports.</summary>
+        public static string EnvironmentSummary() =>
+            $"Unity {Application.unityVersion}, {Application.platform}, {SystemInfo.graphicsDeviceType} ({SystemInfo.graphicsDeviceName}), " +
+            $"pipeline: {(UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline != null ? UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline.GetType().Name : "Built-in")}, " +
+            $"color space: {QualitySettings.activeColorSpace}";
     }
 
     /// <summary>Where downloaded spaces live.</summary>

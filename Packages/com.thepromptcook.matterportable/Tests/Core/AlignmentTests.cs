@@ -90,6 +90,26 @@ namespace Matterportable.Tests
         }
 
         [Test]
+        public void FailedAlignmentIsRecordedAndNotRetriedAutomatically()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "mpt-unsolved-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var space = SyntheticSpace.Generate(new SyntheticOptions { PanoSizes = new[] { 32 }, TextureSize = 32 });
+                space.WriteTo(dir, writeCalibration: false);
+                Directory.Delete(Path.Combine(dir, CacheLayout.TexturesDir), true); // no textures -> nothing to compare against
+                Assert.IsTrue(SpaceCalibration.LoadOrDefault(dir).NeedsSolve);
+                var cal = CalibrationPipeline.Run(dir, CalibrationPipeline.LoadPngLuma, null, CancellationToken.None);
+                Assert.AreEqual(SpaceCalibration.Unsolved, cal.Method);
+                Assert.IsFalse(SpaceCalibration.LoadOrDefault(dir).NeedsSolve, "a failed solve must not re-run on every load");
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch (IOException) { }
+            }
+        }
+
+        [Test]
         public void FullPipelineFromFilesOnDisk()
         {
             var dir = Path.Combine(Path.GetTempPath(), "mpt-align-" + Guid.NewGuid().ToString("N"));

@@ -123,6 +123,19 @@ namespace Matterportable.Tests
         }
 
         [Test]
+        public void DiagnosticsReportSummarisesAndRedactsTokens()
+        {
+            var fake = new FakeMatterport(SmallSpace());
+            new SpaceDownloader(fake, NullLog.Instance).DownloadAsync("DemoSpace01", _dir,
+                new DownloadOptions { PanoSizes = new[] { 32 } }, CancellationToken.None).GetAwaiter().GetResult();
+            var report = Diagnostics.Report(_dir, "test");
+            StringAssert.Contains("Matterportable demo house (DemoSpace01)", report);
+            StringAssert.Contains("panorama tier 32px", report);
+            StringAssert.Contains("firstLocation", report);
+            StringAssert.DoesNotContain("?t=t1", report, "signed tokens must be redacted");
+        }
+
+        [Test]
         public void RefreshesExpiredLinksAndRetries()
         {
             var space = SmallSpace();

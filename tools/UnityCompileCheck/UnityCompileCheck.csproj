@@ -1,10 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
     Compile-checks the Unity-facing code without a Unity install, against UnityEngine/UnityEditor reference
-    assemblies from NuGet. Usage:
-      dotnet build tools/UnityCompileCheck                 (editor configuration, UNITY_EDITOR defined)
-      dotnet build tools/UnityCompileCheck -p:Player=true  (player configuration, runtime code only)
-    This only proves the code compiles against the Unity API; it does not run it.
+    assemblies from NuGet (Unity 2021.1 API surface). This proves the code compiles; it does not run it.
+      dotnet build tools/UnityCompileCheck                        editor configuration (UNITY_EDITOR, editor + tests)
+      dotnet build tools/UnityCompileCheck -p:Player=true         player configuration (runtime only)
+      dotnet build tools/UnityCompileCheck -p:InputSystem=true    runtime with the Input System code path (API stub)
+    tools/check.sh runs all three.
   -->
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
@@ -12,20 +13,28 @@
     <Nullable>disable</Nullable>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <NoWarn>CS0618;CS0414;CS0649;CS1701;CS1702</NoWarn>
-    <DefineConstants>UNITY_2017_1_OR_NEWER;UNITY_2019_1_OR_NEWER;UNITY_2020_1_OR_NEWER;UNITY_2020_2_OR_NEWER;UNITY_2021_1_OR_NEWER;ENABLE_LEGACY_INPUT_MANAGER;UNITY_STANDALONE</DefineConstants>
-    <DefineConstants Condition="'$(Player)' != 'true'">$(DefineConstants);UNITY_EDITOR</DefineConstants>
+    <Editor Condition="'$(Player)' != 'true' and '$(InputSystem)' != 'true'">true</Editor>
+    <DefineConstants>UNITY_2017_1_OR_NEWER;UNITY_2019_1_OR_NEWER;UNITY_2020_1_OR_NEWER;UNITY_2020_2_OR_NEWER;UNITY_2021_1_OR_NEWER;UNITY_STANDALONE</DefineConstants>
+    <DefineConstants Condition="'$(InputSystem)' != 'true'">$(DefineConstants);ENABLE_LEGACY_INPUT_MANAGER</DefineConstants>
+    <DefineConstants Condition="'$(InputSystem)' == 'true'">$(DefineConstants);ENABLE_INPUT_SYSTEM;MATTERPORTABLE_INPUT_SYSTEM</DefineConstants>
+    <DefineConstants Condition="'$(Editor)' == 'true'">$(DefineConstants);UNITY_EDITOR;UNITY_INCLUDE_TESTS</DefineConstants>
     <Package>../../Packages/com.thepromptcook.matterportable</Package>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="$(Package)/Runtime/**/*.cs" />
-    <Compile Include="$(Package)/Editor/**/*.cs" Condition="'$(Player)' != 'true'" />
-    <Compile Include="$(Package)/Tests/Editor/**/*.cs" Condition="'$(Player)' != 'true'" />
-    <Compile Include="../../Assets/Editor/**/*.cs" Condition="'$(Player)' != 'true'" />
+    <Compile Include="Stubs/InputSystem.cs" Condition="'$(InputSystem)' == 'true'" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(Editor)' == 'true'">
+    <Compile Include="$(Package)/Editor/**/*.cs" />
+    <Compile Include="$(Package)/Tests/Editor/**/*.cs" />
+    <Compile Include="$(Package)/Tests/PlayMode/**/*.cs" />
+    <Compile Include="../../Assets/Editor/**/*.cs" />
+    <Compile Include="Stubs/TestRunner.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Unity3D.SDK" Version="2021.1.14.1" GeneratePathProperty="true" ExcludeAssets="all" />
-    <PackageReference Include="NUnit" Version="3.14.0" Condition="'$(Player)' != 'true'" />
+    <PackageReference Include="NUnit" Version="3.14.0" Condition="'$(Editor)' == 'true'" />
     <Reference Include="UnityEngine"><HintPath>$(PkgUnity3D_SDK)/lib/UnityEngine.dll</HintPath></Reference>
-    <Reference Include="UnityEditor" Condition="'$(Player)' != 'true'"><HintPath>$(PkgUnity3D_SDK)/lib/UnityEditor.dll</HintPath></Reference>
+    <Reference Include="UnityEditor" Condition="'$(Editor)' == 'true'"><HintPath>$(PkgUnity3D_SDK)/lib/UnityEditor.dll</HintPath></Reference>
   </ItemGroup>
 </Project>

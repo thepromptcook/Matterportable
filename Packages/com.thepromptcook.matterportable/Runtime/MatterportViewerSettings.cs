@@ -68,6 +68,10 @@ namespace Matterportable
         [Tooltip("Adds a MeshCollider so your own gameplay code can raycast the space with Physics.")]
         public bool addMeshCollider;
 
+        [Header("Diagnostics")]
+        [Tooltip("Also print progress messages to the Console (they are always written to MatterportCache/<id>/debug/load.log).")]
+        public bool verboseLogging;
+
         public float TransitionDuration(float meters) =>
             Mathf.Clamp(transitionBase + transitionPerMeter * meters, transitionBase, Mathf.Max(transitionBase, transitionMax));
 

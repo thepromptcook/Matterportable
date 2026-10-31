@@ -14,7 +14,7 @@ namespace Matterportable.Core
         public int TextureSize = 512;
         public int Seed = 7;
         /// <summary>Conventions used when writing the data. Defaults to Matterport's (Z-up, default face layout).</summary>
-        public SpaceCalibration Truth = new SpaceCalibration { Method = "synthetic" };
+        public SpaceCalibration Truth = new SpaceCalibration { Method = SpaceCalibration.Synthetic };
         public bool QuantizedMesh;
         public bool RandomRotations = true;
         public string ImageExtension = "png";
@@ -472,7 +472,7 @@ namespace Matterportable.Core
             if (writeCalibration)
             {
                 var cal = Options.Truth.Clone();
-                cal.Method = "synthetic";
+                cal.Method = SpaceCalibration.Synthetic;
                 cal.Save(spaceDir);
             }
         }
