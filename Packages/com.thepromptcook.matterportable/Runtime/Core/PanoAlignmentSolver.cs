@@ -212,6 +212,18 @@ namespace Matterportable.Core
                 return pr.CompareTo(qr);
             });
             var top = candidates[0];
+            // Near-tie: prefer Matterport's known convention (identical on every real space tested) over a lookalike.
+            var known = CubeFaces.DefaultMatterportLayout();
+            bool IsKnown((RotationMode mode, bool flip, bool mirrored, double total, FaceBasis[] faces) c) =>
+                c.mode == RotationMode.Direct && !c.flip && !c.mirrored && SameMapping(c.faces, known);
+            if (!IsKnown(top))
+                foreach (var c in candidates)
+                    if (IsKnown(c) && top.total - c.total < KnownConventionPreference)
+                    {
+                        result.Report.Add($"Within {KnownConventionPreference} of the best score: using Matterport's known convention.");
+                        top = c;
+                        break;
+                    }
             // Margin: lead over the best hypothesis that maps panorama pixels to different directions.
             // (Alternatives differing only in the texture V convention are reported separately.)
             double runnerUp = double.NegativeInfinity, flipRunnerUp = double.NegativeInfinity;
@@ -239,6 +251,9 @@ namespace Matterportable.Core
             foreach (var line in result.Report) log?.Info("Alignment: " + line);
             return result;
         }
+
+        /// <summary>Score lead a different layout needs over Matterport's known convention to replace it.</summary>
+        public const double KnownConventionPreference = 0.05;
 
         static bool SameMapping(FaceBasis[] a, FaceBasis[] b)
         {

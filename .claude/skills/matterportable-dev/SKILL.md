@@ -153,6 +153,21 @@ sweeps) is rebuilt on every run, on a worker thread. Panorama faces and mesh tex
 the main thread only creates `Texture2DArray`/`ImageTexture`. Depth cubes come from the same
 `CubeFaces.DepthCube` (Core) and upload one per frame.
 
+## Checking against real Matterport spaces
+
+When fidelity is in doubt, test on real spaces here instead of asking the user. The commands are in CLAUDE.md.
+1. Download a few public spaces with the CLI. Public tours used so far: `rGMMnZDh3Tf` (the user's house),
+   `2ds5iarQnk3`, `4FXijnxaBcJ` and `L4VL15Qoh2e` (Indiana University tours).
+2. Run Godot `--compare`. It renders, at evenly spaced sweeps and four headings, Matterport's baked mesh texture
+   (view 1) and the sweep photo (view 2).
+3. Run `tools/compare_alignment.py`. At rest Matterport shows exactly that photo, and it baked the textures from
+   the same photos, so the pairs must line up:
+   - aligned spaces gave edge correlation 0.40-0.49 at 0° offset
+   - a deliberately wrong rotation convention gave 0.10, so the script prints MISALIGNED
+   - also look at a few `overlay_*.png` checkerboards
+4. For measurement scale, ray-cast floor to ceiling above each sweep (all four looked physically right, see
+   matterport-formats.md). Blurry baked textures lower the correlation without any offset; that's expected.
+
 ## 4. Reading what the user sends
 
 - **Godot Output / Debugger ▸ Errors:** the same `[Matterportable]` lines (`GD.PushWarning` / `GD.PushError`).

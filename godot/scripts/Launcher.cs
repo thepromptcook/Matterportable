@@ -9,7 +9,7 @@ namespace Matterportable
     /// <summary>
     /// The start menu (mirrors the Unity MatterportLauncher): paste a Matterport link, open the offline demo or a
     /// downloaded space. Esc or the Menu button returns here. Command line (after "--"): --open &lt;link|demo&gt;,
-    /// --sweep N, --mode inside|dollhouse|floorplan, --view N (F2 render view), --goto N (move there after loading), --measure (draws a measurement),
+    /// --sweep N, --mode inside|dollhouse|floorplan, --view N (F2 render view), --goto N (move there after loading), --measure (draws a measurement), --compare dir [--compare-sweeps N] (see RunCompare),
     /// --screenshot file.png (quits after saving), for headless checks.
     /// </summary>
     public partial class Launcher : Node
@@ -25,7 +25,8 @@ namespace Matterportable
         Hud _hud;
         MatterportMeasure _measure;
         int _measureStep = -1;
-        string _screenshot;
+        string _screenshot, _compare;
+        int _compareSweeps = 6;
         string _mode;
         int _view, _goto = -1;
         int _screenshotFrames = -1;
@@ -44,6 +45,8 @@ namespace Matterportable
                 if (args[i] == "--view") int.TryParse(args[i + 1], out _view);
                 if (args[i] == "--goto") int.TryParse(args[i + 1], out _goto);
                 if (args[i] == "--screenshot") _screenshot = args[i + 1];
+                if (args[i] == "--compare") _compare = args[i + 1];
+                if (args[i] == "--compare-sweeps") int.TryParse(args[i + 1], out _compareSweeps);
             }
             if (Array.IndexOf(args, "--measure") >= 0) _measureStep = 0;
             if (open == "demo") OpenDemo(sweep);
@@ -190,6 +193,51 @@ namespace Matterportable
             }
         }
 
+        /// <summary>
+        /// Alignment check on real spaces: at evenly spaced sweeps and four headings, saves the same view twice -
+        /// Matterport's baked mesh texture only (render view 1) and the sweep's photo only (render view 2) - as
+        /// dir/s{sweep}_y{yaw}_{mesh|pano}.png, plus compare.txt (camera, fov, sizes). At a sweep Matterport shows
+        /// exactly that photo, and it baked the mesh textures from the same photos, so the pairs must line up;
+        /// tools/compare_alignment.py measures any offset. Quits when done.
+        /// </summary>
+        async void RunCompare(string dir)
+        {
+            System.IO.Directory.CreateDirectory(dir);
+            _hud.Visible = false;
+            _measure.Visible = false;
+            _space.Settings.ShowReticle = false;
+            var info = new System.Text.StringBuilder();
+            info.AppendLine($"space {_space.ModelId} \"{_space.Manifest.Name}\" sweeps {_space.Sweeps.Count} fov {_space.Settings.DefaultFov} calibration {_space.Calibration.Method} score {_space.Calibration.Score:0.00}");
+            int n = Math.Max(1, Math.Min(_compareSweeps, _space.Sweeps.Count));
+            for (int k = 0; k < n; k++)
+            {
+                int sweep = (int)((k + 0.5f) * _space.Sweeps.Count / n);
+                _nav.Teleport(sweep, 0f, -10f);
+                // Wait for the full-size photo (or 10 s) and all mesh textures.
+                for (int f = 0; f < 600; f++)
+                {
+                    var e = _space.Panoramas.Get(sweep);
+                    var largest = _space.Manifest.Sweeps[sweep].TierAtMost(_space.Settings.PanoMaxSize);
+                    if (e?.Faces != null && (largest == null || e.Size >= largest.Size) && _space.TexturesLoaded >= _space.Manifest.Textures.Count) break;
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                }
+                foreach (int yaw in new[] { 0, 90, 180, 270 })
+                {
+                    _nav.Teleport(sweep, yaw, -10f);
+                    foreach (var (view, name) in new[] { (1, "mesh"), (2, "pano") })
+                    {
+                        _space.DebugView = view;
+                        for (int f = 0; f < 3; f++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                        GetViewport().GetTexture().GetImage().SavePng(System.IO.Path.Combine(dir, $"s{sweep:D3}_y{yaw:D3}_{name}.png"));
+                    }
+                }
+                info.AppendLine($"sweep {sweep} id {_space.Sweeps[sweep].Id} pano {_space.Panoramas.Get(sweep)?.Size}px");
+            }
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "compare.txt"), info.ToString());
+            GD.Print($"[Matterportable] compare: {n} sweeps saved to {dir}");
+            GetTree().Quit();
+        }
+
         public override void _UnhandledInput(InputEvent e)
         {
             if (e is InputEventKey k && k.Pressed && !k.Echo && k.Keycode == Key.Escape && _space != null) ShowMenu();
@@ -197,6 +245,12 @@ namespace Matterportable
 
         public override void _Process(double delta)
         {
+            if (_compare != null && _space != null && _space.IsLoaded && _nav.CurrentSweep >= 0)
+            {
+                var dir = _compare;
+                _compare = null;
+                RunCompare(dir);
+            }
             if (_screenshot == null || _space == null) return;
             if (_space.Error != null) { GD.PrintErr("[Matterportable] " + _space.Error); GetTree().Quit(1); return; }
             // Wait for the space, its panoramas and the mode animation to settle, then save the frame and quit.

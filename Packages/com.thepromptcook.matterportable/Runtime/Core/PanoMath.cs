@@ -78,14 +78,18 @@ namespace Matterportable.Core
         /// Best guess for Matterport skybox face order: 0 up, 1 front, 2 right, 3 back, 4 left, 5 down
         /// (front = +Z in the converted local frame). The alignment solver verifies/replaces this per space.
         /// </summary>
+        /// <summary>
+        /// Matterport's panorama face layout (with <see cref="RotationMode.Direct"/>): the layout the solver found on
+        /// every real space tested (a house, a study centre, a museum collection, a bus). Image 0 is up, 5 is down.
+        /// </summary>
         public static FaceBasis[] DefaultMatterportLayout() => new[]
         {
-            Canonical[(int)SignedAxis.PosY],
-            Canonical[(int)SignedAxis.PosZ],
-            Canonical[(int)SignedAxis.PosX],
-            Canonical[(int)SignedAxis.NegZ],
-            Canonical[(int)SignedAxis.NegX],
-            Canonical[(int)SignedAxis.NegY],
+            new FaceBasis(SignedAxis.PosY, SignedAxis.NegZ, SignedAxis.NegX),
+            new FaceBasis(SignedAxis.PosX, SignedAxis.NegZ, SignedAxis.PosY),
+            new FaceBasis(SignedAxis.NegZ, SignedAxis.NegX, SignedAxis.PosY),
+            new FaceBasis(SignedAxis.NegX, SignedAxis.PosZ, SignedAxis.PosY),
+            new FaceBasis(SignedAxis.PosZ, SignedAxis.PosX, SignedAxis.PosY),
+            new FaceBasis(SignedAxis.NegY, SignedAxis.NegZ, SignedAxis.PosX),
         };
 
         /// <summary>Selects the canonical face for a direction and returns image coordinates (s right, t up).</summary>

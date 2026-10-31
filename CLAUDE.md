@@ -6,8 +6,9 @@ Turns a Matterport link into a navigable, photoreal environment in **two engines
 - **Godot 4 (.NET build):** the project in `godot/`, which compiles `Runtime/Core` directly. The user imports
   `godot/project.godot` with Godot 4.4+ .NET on Windows.
 
-**Your environment can't run Unity or reach Matterport's viewer, but it can run Godot.** Matterport's Cloudflare bot
-check blocks cloud IPs; don't try to get around it. Verify your work with `tools/check.sh`. `tools/godot-check.sh`
+**Your environment can't run Unity or reach Matterport's viewer page, but it can run Godot, and Matterport's data API
+and CDN work from here**, so the CLI can download public spaces for testing. The viewer page is blocked by Cloudflare's
+bot check for cloud IPs; don't try to get around it. Verify your work with `tools/check.sh`. `tools/godot-check.sh`
 runs the Godot project headless on the demo house and saves screenshots: open them with Read to see what you changed.
 The user tests in Unity and Godot and pastes back Console/Output text or a diagnostics report.
 
@@ -18,6 +19,10 @@ tools/setup-dev.sh     # once per container: .NET 8 SDK, glslang, NuGet restore
 tools/check.sh         # every check (~20 s): core tests, Unity compile x3, CLI, browser script, shaders, metas, dead code
 tools/check.sh --fast  # core tests + scripts only
 tools/godot-check.sh   # Godot demo runs → /tmp/matterportable-godot/{inside,dollhouse,measure}.png (+ --sweep N, --view N)
+# real-space check: download, render photo-vs-mesh pairs in Godot, measure alignment (verdict ALIGNED/MISALIGNED)
+dotnet run --project tools/Matterportable.Cli -- download https://my.matterport.com/show/?m=<id>
+xvfb-run -a -s "-screen 0 960x540x24" /opt/godot/godot --path godot --resolution 960x540 --rendering-method gl_compatibility -- --open <id> --compare /tmp/cmp/<id>
+python3 tools/compare_alignment.py /tmp/cmp/<id>
 dotnet test tools/Matterportable.Core.Tests --filter Alignment
 dotnet run --project tools/Matterportable.Cli -- help   # download / import / demo / info / align / diagnose / browser-script
 ```

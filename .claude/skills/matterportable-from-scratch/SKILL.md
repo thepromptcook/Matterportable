@@ -105,7 +105,13 @@ Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; sc
    - Check: the editor, player and Input System compile configurations all pass.
 8. **Editor and project:** inspector, editor tools, setup script, `.meta` generation, PlayMode test.
    - Check: `tools/check.sh` is all green.
-9. **Godot port** (after Unity works, or in parallel once the Core is done):
+9. **Real-space fidelity check:**
+   - Matterport's API and CDN are reachable from cloud containers, so download public spaces.
+   - Render photo-only vs baked-mesh-texture pairs and measure their offset and correlation (Godot `--compare` +
+     `tools/compare_alignment.py`), with a negative control: break the calibration and confirm it fails.
+   - Check floor-to-ceiling heights for scale.
+   - Make the convention found on every real space the default.
+9b. **Godot port** (after Unity works, or in parallel once the Core is done):
    - Create the .NET project linking the Core, then port the runtime file by file and the shaders function by
      function.
    - Check: `dotnet build` against `Godot.NET.Sdk` from NuGet, then `tools/godot-check.sh`. That runs Godot headless

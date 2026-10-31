@@ -98,3 +98,21 @@ Not confirmed, so these are our choices:
 - the white pill labels
 - label format: `12' 4"` to the nearest inch, `3.76 m`
 - the M shortcut
+
+## Confirmed on four real spaces (checked here with Godot --compare)
+
+| Space | Sweeps | Solver | Alignment (compare_alignment.py) | Floor to ceiling (median) | Camera height |
+|---|---|---|---|---|---|
+| rGMMnZDh3Tf 359 N Ridgewood Pl (house, 2 floors) | 58 | 0.83, margin 0.53 | 0.0°, corr 0.45 | 2.53 m (8.3 ft) | 1.53 m |
+| 2ds5iarQnk3 Center for Ray Bradbury Studies | 46 | 0.87, margin **0.02** | 0.0°, corr 0.40 | 2.73 m | 1.53 m |
+| 4FXijnxaBcJ IU Paleontology Collection | 60 | 0.89, margin 0.46 | 0.0°, corr 0.46 | 2.71 m | 1.70 m |
+| L4VL15Qoh2e Virtual Bicentennial Bus | 16 | 0.89, margin 0.64 | 0.0°, corr 0.49 | 2.12 m | 1.42 m |
+
+- **Same face layout and rotation on all four:** `Direct`, with faces
+  `0:F+Y R-Z U-X 1:F+X R-Z U+Y 2:F-Z R-X U+Y 3:F-X R+Z U+Y 4:F+Z R+X U+Y 5:F-Y R-Z U+X`.
+  - This is now `CubeFaces.DefaultMatterportLayout`. The previous default had several faces rotated 90°.
+  - The solver keeps this convention unless another one beats it by more than 0.05. Bradbury's runner-up came
+    within 0.02.
+- **Winding** was inverted on every mesh, and each one was detected and flipped.
+- **Meshes** offered: newer spaces list `dam 500k`, `dam 50k`, `tesselate.dam` and `tesselate.v2.dam`; we use the
+  50k DAM.

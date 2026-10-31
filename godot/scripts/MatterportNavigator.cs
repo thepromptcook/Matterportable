@@ -112,6 +112,24 @@ namespace Matterportable
             else StartOrbitMode(mode);
         }
 
+        /// <summary>Jumps instantly (no transition), looking along <paramref name="yaw"/> and <paramref name="pitch"/>
+        /// (degrees, Godot convention) - for tests and tools.</summary>
+        public void Teleport(int sweep, float yaw, float pitch = 0f)
+        {
+            if (!HasSpace || sweep < 0 || sweep >= Space.Sweeps.Count) return;
+            if (!_initialised) Initialise();
+            _move = default;
+            _anim = default;
+            _pending = _queued = -1;
+            Mode = ViewMode.Inside;
+            _projection = 1f;
+            Space.SetCullBack(false);
+            _yaw = _targetYaw = yaw;
+            _pitch = _targetPitch = pitch;
+            _fov = _targetFov = S.DefaultFov;
+            Arrive(sweep);
+        }
+
         public void SetFloor(int floor)
         {
             if (!HasSpace) return;
