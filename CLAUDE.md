@@ -7,7 +7,7 @@ Turns a Matterport link into a navigable, photoreal environment in **three front
   `godot/project.godot` with Godot 4.4+ .NET on Windows.
 - **Web:**
   - `web/server` (ASP.NET Core) downloads and prepares spaces with the Core and serves the page.
-  - `web/wasm` is the Core compiled to WebAssembly (ray casts, measure tool).
+  - `web/wasm` is the Core compiled to WebAssembly (navigator, panorama scheduler, measure tool).
   - `web/client` is three.js. Run it with `dotnet run --project web/server`, then open http://localhost:8080.
   - It will be deployed for others later.
 
@@ -15,7 +15,7 @@ Turns a Matterport link into a navigable, photoreal environment in **three front
 and CDN work from here**, so the CLI can download public spaces for testing. The viewer page is blocked by Cloudflare's
 bot check for cloud IPs; don't try to get around it. Verify your work with `tools/check.sh`. `tools/godot-check.sh`
 runs the Godot project headless on the demo house and saves screenshots: open them with Read to see what you changed.
-The user tests in Unity and Godot and pastes back Console/Output text or a diagnostics report.
+The user tests in Unity, Godot and the browser and pastes back Console/Output text or a diagnostics report.
 
 ## Commands
 
