@@ -7,7 +7,7 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <Nullable>disable</Nullable>
     <NoWarn>$(NoWarn);CS0649;CA1416</NoWarn>
-    <PublishDir>$(MSBuildThisFileDirectory)bin/publish/</PublishDir>
+    <PublishDir>$(MSBuildThisFileDirectory)bin/publish/$(TargetFramework)/</PublishDir>
     <DebuggerSupport>false</DebuggerSupport>
     <EventSourceSupport>false</EventSourceSupport>
     <UseSystemResourceKeys>true</UseSystemResourceKeys>

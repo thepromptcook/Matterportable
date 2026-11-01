@@ -19,15 +19,19 @@
 
   <!-- Publish the WebAssembly Core (trimmed) and copy its _framework into wwwroot (served at /_framework). -->
   <Target Name="BuildWasmCore" BeforeTargets="Build">
-    <MSBuild Projects="../wasm/Matterportable.Wasm.csproj" Targets="Restore;Publish" Properties="Configuration=Release" />
+    <!-- Restore and publish in separate evaluations: publishing in the same call as the restore uses a stale
+         evaluation, which .NET 10 turns into a silently empty _framework. -->
+    <MSBuild Projects="../wasm/Matterportable.Wasm.csproj" Targets="Restore" Properties="Configuration=Release;MatterportableRestore=true" />
+    <MSBuild Projects="../wasm/Matterportable.Wasm.csproj" Targets="Publish" Properties="Configuration=Release" />
+    <Error Condition="!Exists('../wasm/bin/publish/$(TargetFramework)/wwwroot/_framework/dotnet.js')" Text="The WebAssembly Core was not published (web/wasm/bin/publish/wwwroot/_framework/dotnet.js is missing)." />
     <ItemGroup>
-      <WasmFramework Include="../wasm/bin/publish/wwwroot/_framework/**" />
+      <WasmFramework Include="../wasm/bin/publish/$(TargetFramework)/wwwroot/_framework/**" />
     </ItemGroup>
     <Copy SourceFiles="@(WasmFramework)" DestinationFiles="@(WasmFramework->'$(OutDir)wwwroot/_framework/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
   <Target Name="PublishWasmCore" AfterTargets="Publish">
     <ItemGroup>
-      <WasmFrameworkPublish Include="../wasm/bin/publish/wwwroot/_framework/**" />
+      <WasmFrameworkPublish Include="../wasm/bin/publish/$(TargetFramework)/wwwroot/_framework/**" />
     </ItemGroup>
     <Copy SourceFiles="@(WasmFrameworkPublish)" DestinationFiles="@(WasmFrameworkPublish->'$(PublishDir)wwwroot/_framework/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>

@@ -149,6 +149,10 @@ The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceD
     `MeshFeatures.Serialize`), and the page only loads them.
   - **JSExport** methods are called from JS only; `find_unused.py` reads `web/client/js` too.
   - **Shaders:** GLSL 3 shaders declare `out vec4 mpColor` (three r169 doesn't define `gl_FragColor` for GLSL3).
+  - **SDK versions:** the user builds with .NET 10, while this container's default is .NET 8. The server's build
+    restores and publishes the WebAssembly Core in separate MSBuild calls (one combined call gave .NET 10 an empty
+    `_framework`: "Failed to fetch … dotnet.js"). `check.sh` builds the web project with both SDKs; .NET 10 lives in
+    `/opt/dotnet10` and builds in its own copy.
 - **Godot shader values** are set per material every frame by `MatterportSpace.ApplyView` (no globals). The sky
   shader returns a flat colour in `AT_CUBEMAP_PASS`, so radiance updates stay cheap.
 - **Images load through `GpuTextures`** (UnityWebRequestTexture decode off the main thread, GPU blit and mips).

@@ -39,6 +39,17 @@ fi
 step "cli build" "$DOTNET" build tools/Matterportable.Cli
 step "godot compile" "$DOTNET" build godot/Matterportable.csproj -warnaserror
 step "web compile (server + WebAssembly Core)" "$DOTNET" build web/server
+# The user builds with .NET 10; SDK versions differ in how the WebAssembly Core publishes, so build with it too.
+# Built in a copy (kept between runs, so it is incremental): two SDKs sharing obj/ folders break each other.
+web_build_net10() {
+  local tmp=/tmp/matterportable-net10 core=Packages/com.thepromptcook.matterportable/Runtime/Core
+  mkdir -p "$tmp"
+  tar --exclude=bin --exclude=obj -cf - web "$core" | tar -C "$tmp" -xf - &&
+    /opt/dotnet10/dotnet build "$tmp/web/server" -nodeReuse:false -v q -nologo &&
+    test -f "$tmp"/web/server/bin/Debug/net10.0/wwwroot/_framework/dotnet.js
+}
+if [[ -x /opt/dotnet10/dotnet ]]; then step "web compile with .NET 10 (the user's SDK)" web_build_net10
+else skip "web compile with .NET 10" "run tools/setup-dev.sh"; fi
 
 browser_script_up_to_date() {
   local tmp; tmp="$(mktemp)"

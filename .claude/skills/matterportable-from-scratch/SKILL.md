@@ -178,6 +178,9 @@ Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; sc
   - Target `net$(BundledNETCoreAppTargetFrameworkVersion)` with `RollForward=LatestMajor`, so the user's .NET 10 SDK
     builds and runs it without .NET 8 installed.
   - XML comments in csproj can't contain `--` (bit twice).
+  - Building one project from another: run `Restore` and `Publish` as separate MSBuild calls. .NET 8 tolerated
+    `Targets="Restore;Publish"`; .NET 10 produced an empty `_framework` from it ("Failed to fetch dynamically
+    imported module …/dotnet.js"). Test with the user's SDK version (check.sh builds with .NET 8 and 10).
   - Headless browser checks render on the CPU: use Mesa through xvfb (not SwiftShader) and turn off MSAA and
     anisotropy for them. Otherwise "wait until loaded" checks crawl at 2 fps.
   - Draw the sky box last at the far plane (`gl_Position.xyww`, depth test on), not first under everything.

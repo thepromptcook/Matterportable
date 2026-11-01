@@ -11,6 +11,11 @@ if ! command -v dotnet >/dev/null && [[ ! -x /opt/dotnet/dotnet ]]; then
   bash /tmp/dotnet-install.sh --channel 8.0 --install-dir /opt/dotnet >/dev/null
 fi
 DOTNET="$(command -v dotnet || echo /opt/dotnet/dotnet)"
+if [[ ! -x /opt/dotnet10/dotnet ]]; then
+  echo "Installing .NET 10 SDK to /opt/dotnet10 (the user's SDK; the web build is checked with both)…"
+  curl -sSL https://builds.dotnet.microsoft.com/dotnet/scripts/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+  bash /tmp/dotnet-install.sh --channel 10.0 --install-dir /opt/dotnet10 >/dev/null || echo "  could not install .NET 10"
+fi
 echo "dotnet: $("$DOTNET" --version)"
 
 if ! command -v glslangValidator >/dev/null; then
