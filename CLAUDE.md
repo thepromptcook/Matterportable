@@ -36,6 +36,9 @@ python3 tools/compare_fidelity.py /tmp/fid/a /tmp/fid/b
 # moving a prop on a real space (Walk mode: F on the middle of the view, turn, F): Godot, then the web page
 xvfb-run -a -s "-screen 0 1280x720x24" /opt/godot/godot --path godot --resolution 1280x720 --rendering-method gl_compatibility -- --open rGMMnZDh3Tf --mode walk --sweep 35 --yaw 46 --pitch 35 --move-prop -50 --screenshot /tmp/props/after.png
 #   web: ?open=rGMMnZDh3Tf&mode=walk&sweep=35&yaw=46&pitch=35&move=-50 (view=5: every prop coloured)
+# reconstruction (CPU, pre-trained ONNX models, nothing trained): furniture painted out of the panoramas
+dotnet run --project tools/Matterportable.Cli -- masks MatterportCache/<id> --size 160   # which prop each pixel shows (~10 s)
+pip install -r tools/reconstruct/requirements.txt && python3 tools/reconstruct/clean_panos.py MatterportCache/<id>   # → recon/clean/
 dotnet test tools/Matterportable.Core.Tests --filter Alignment
 dotnet run --project tools/Matterportable.Cli -- help   # download / demo / info / diagnose
 ```
@@ -79,6 +82,7 @@ web/wasm/Bridge.cs    [JSExport] surface of the Core: Load, Frame (one call per 
                        markers, loader commands out - layout in its comment), Navigate, Pano*/DepthReady, Measure*
 web/client/           index.html, style.css, vendor/three.module.min.js (r169, MIT), js/ mirroring the engine files
 tools/                CLI, test runner project, UnityCompileCheck (+ API stubs), check scripts, godot-check.sh, web-check.sh
+tools/reconstruct/     Python, offline: clean_panos.py (Segment Anything + LaMa, ONNX on CPU; models in MatterportCache/_models)
 ```
 
 The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceDownloader` →
@@ -200,6 +204,12 @@ navigator.
     flags in `_MP_Moved` / `moved_props` / `movedProps`, the drawn piece in `_MP_PropId` / `prop_id` (pass a float in
     Godot: an int is ignored) / `propId`), and fill the hole from the photo's surroundings (`MP_HoleFill`: rings of
     directions around the hole, coarse mip) instead of the baked texture, which holds the prop.
+- **Reconstruction** (offline, toward a clean 3D rebuild of the house; see the from-scratch skill's plan): Python in
+  `tools/reconstruct/`, pre-trained models only, CPU now and GPU later. Step 2 so far: `PropMasks.PieceMask` (Core)
+  ray-casts which prop each panorama pixel shows (CLI `masks`); `clean_panos.py` sharpens the biggest pieces with
+  MobileSAM (box prompts from those masks; ~0.5 s per face whatever its size, so only ~85 faces), grows the rest, and
+  paints them out with LaMa (fixed 512 px input, ~3.5 s per face) into `recon/clean/<sweep>/face<N>.jpg`. The viewers
+  don't use the clean faces yet.
 - **Measurement** behaviour (clicks, Escape, snapping, axes, units, what shows in which view, colours and line
   widths) lives only in Core `MeasureTool`; the engine files feed it the pointer ray and draw the screen-space
   `MeasureOverlay` items (line, dot, ring, label). While measuring, `Navigator.Measuring` hides markers and leaves

@@ -217,6 +217,17 @@ Web: server (ASP.NET Core, the Core natively: download, bundle, BVH + features) 
   the target panorama (small tier first). Mode changes fly between poses, fading projection out early when
   leaving a sweep and in late when arriving.
 
+## Reconstruction plan (the user's goal: a clean 3D house with real objects)
+
+Projected photos can't hide what moving furniture reveals, so the target is an offline rebuild loaded as a normal
+scene: (1) clean shell (walls/floors fitted, textured from photos, hidden spots inpainted), (2) objects outlined in the
+photos, (3) objects completed as 3D assets (photos + image-to-3D, library fallback), (4) delighting and real lights,
+(5) one glTF package for all three engines. Pre-trained models only (no training), CPU now, GPU later.
+Measured on 4 CPU cores: MobileSAM encoder ~0.5 s per face at any input size (it pads to 1024; the quantized model is
+slower; 4 processes × 1 thread = 1 × 4 threads, ~2 faces/s), decoder 0.1 s; LaMa 3.5 s per 512 px inpaint. So outline
+only faces with big pieces, using box prompts from the scan's own prop masks, and grow the scan mask elsewhere.
+PIL `MaxFilter` with a big kernel on a 2048 px mask takes minutes: dilate at a quarter size.
+
 ## Pitfalls already hit (don't repeat them)
 
 - **Measure mode:**

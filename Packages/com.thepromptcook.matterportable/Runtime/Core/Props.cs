@@ -546,6 +546,32 @@ namespace Matterportable.Core
         }
     }
 
+    /// <summary>The props as they appear in the photos: for the reconstruction step that paints them out.</summary>
+    public static class PropMasks
+    {
+        /// <summary>
+        /// Which piece each pixel of one panorama face image shows (0 the room or nothing, i + 1 prop i), rows bottom-up
+        /// like the Core's images, by ray-casting the scan from the sweep through the face's pixel centres.
+        /// </summary>
+        public static int[] PieceMask(SpaceModel model, int sweep, int slice, int size)
+        {
+            var cal = model.Calibration;
+            var layout = CubeFaces.TryBuildLookup(cal.Faces, out _, out _, out _) ? cal.Faces : CubeFaces.DefaultMatterportLayout();
+            var s = model.Sweeps[sweep];
+            var pieces = model.PieceOfTriangle;
+            var mask = new int[size * size];
+            System.Threading.Tasks.Parallel.For(0, size, y =>
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    var dir = (s.WorldFromPano * layout[slice].Direction((x + 0.5f) / size, (y + 0.5f) / size)).Normalized;
+                    if (model.Geometry.Bvh.Raycast(s.Position, dir, 100f, out var hit)) mask[y * size + x] = pieces[hit.Triangle];
+                }
+            });
+            return mask;
+        }
+    }
+
     /// <summary>
     /// Walk mode's world: the scan with its props where they are now, and what the hands do with them (carry, put
     /// down, turn, swing doors). The room is the space's BVH with the props' triangles skipped; each prop is its own

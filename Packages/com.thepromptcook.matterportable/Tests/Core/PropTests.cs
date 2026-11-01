@@ -1,3 +1,4 @@
+using System;
 using Matterportable.Core;
 using NUnit.Framework;
 
@@ -71,6 +72,26 @@ namespace Matterportable.Tests
             pivot = world.Poses[table].Apply(world.Props[table].Pivot);
             Assert.AreEqual(0.75f, pivot.Y, 0.02f, "put down on the other table");
             Assert.IsTrue(world.Raycast(new Vec3(pivot.X, 2f, pivot.Z), Vec3.Down, 1f, out _, out int hitProp) && hitProp == table, "and it collides there (its top at 1.5 m)");
+        }
+
+        [Test]
+        public void PieceMasksShowWherePropsAreInThePhotos()
+        {
+            var model = TestSpaces.RoomModel((new Vec3(1.8f, 0, 1.6f), new Vec3(2.6f, 0.75f, 2.4f)));
+            var layout = CubeFaces.DefaultMatterportLayout();
+            int down = Array.FindIndex(layout, f => f.Forward == SignedAxis.NegY);
+            var mask = PropMasks.PieceMask(model, 2, down, 32); // sweep 2 at (3, 1.5, 2.2) looks down; the table is at its -X side
+            int table = 0, total = 0;
+            for (int y = 0; y < 32; y++)
+                for (int x = 0; x < 32; x++)
+                {
+                    var d = layout[down].Direction((x + 0.5f) / 32, (y + 0.5f) / 32);
+                    if (mask[y * 32 + x] == 0) continue;
+                    total++;
+                    if (d.X < 0) table++;
+                }
+            Assert.Greater(total, 20, "the table shows in the downward face");
+            Assert.AreEqual(total, table, "and only towards it");
         }
 
         [Test]
