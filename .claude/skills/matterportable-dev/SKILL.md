@@ -25,14 +25,14 @@ Make every round count: verify thoroughly here, and ask the user for exactly the
 ### Seeing the web version run
 
 ```bash
-tools/web-check.sh                   # demo house in headless Chromium: inside (move 0 → 1), dollhouse, measure
+tools/web-check.sh                   # demo house in headless Chromium: inside (move 0 → 1), dollhouse, measure, walk
 ```
 
 ```bash
 tools/web-check.sh --compare rGMMnZDh3Tf 6 && python3 tools/compare_alignment.py /tmp/matterportable-web
 ```
 
-The page also reads URL parameters, the same as Godot's command line: `?open=<link|demo>&sweep=N&mode=…&view=N&goto=N&measure=1`.
+The page also reads URL parameters, the same as Godot's command line: `?open=<link|demo>&sweep=N&mode=…&yaw=D&view=N&goto=N&walk=S&measure=1`.
 `window.mp.checks` reports the result. A check that hangs: `window.mp.settleState()` shows what the page is still
 waiting for. Headless rendering is all on the CPU, so the check runs Chromium on Mesa under xvfb with `aa=0&aniso=1`
 (multisampling and anisotropic filtering off). Those cut a 131 s check to 24 s; real browsers keep both on.
@@ -40,7 +40,7 @@ waiting for. Headless rendering is all on the CPU, so the check runs Chromium on
 ### Seeing the Godot version run
 
 ```bash
-tools/godot-check.sh                 # demo house: Inside (after a move 0 → 1), Dollhouse and Measure screenshots, fails on any engine/script/shader error
+tools/godot-check.sh                 # demo house: Inside (after a move 0 → 1), Dollhouse, Measure and Walk (into the table) screenshots, fails on any engine/script/shader error
 ```
 
 ```bash
@@ -48,7 +48,8 @@ tools/godot-check.sh --sweep 5 --view 2   # another sweep; F2 render view 2 = pa
 ```
 
 The Godot launcher also takes these arguments after `--`: `--open <link|demo>`, `--sweep N`,
-`--mode inside|dollhouse|floorplan`, `--view N`, `--measure` (places a two-segment line with real clicks, sends a
+`--mode inside|dollhouse|floorplan|walk`, `--yaw D`, `--walk S` (holds W for S seconds; the log line gives the camera
+position), `--view N`, `--measure` (places a two-segment line with real clicks, sends a
 real Escape, starts another line; the log then says "1 measurement(s), drawing yes, menu closed"), `--goto N` (a real transition; the screenshot waits until it
 finishes), `--screenshot file.png` (it quits after saving). Use them to
 reproduce a bug in a single run. The demo's panoramas are rendered from the synthetic house, so at a sweep the
@@ -93,6 +94,8 @@ tools/check.sh
 | Smearing during moves | depth cubes (scheduler `RequestDepth` → `PanoramaCache.ComputeDepth`), `UseDepth` in `Navigator.PushView`, `MP_Visibility` / `MP_BlendWeights` in `MatterportCommon.hlsl` |
 | Click / WASD / drag / zoom feel, transitions, dollhouse, floor plan, tour | Core `Navigator.cs` + `ViewerTests`; settings in `ViewerSettings`. The `MatterportNavigator` adapters only map input and apply the pose (web: through `Bridge.Frame`) |
 | Wrong panorama shown, bad blend, floors not clipped, culling | `Navigator.PushView` → `ViewBinding` → `MatterportSpace.ApplyView` (Unity, Godot) / `MatterportSpace.update` (web) |
+| Walk mode: walks through something, gets stuck, can't climb stairs, jittery steps | Core `Walker.cs` (body spheres, foot rays, step/fall, no-floor refusal; settings `BodyRadius`, `StepHeight`, `WalkSpeed`) + `WalkingTests`; `Navigator.UpdateWalk` / `StartWalk` (eye height, `Standing`) |
+| Walk mode: popping or wrong photos between sweeps | `Navigator.UpdateWalkPanoramas` (two nearest sweeps in sight, weights 1/d − 1/d₃, sticky slots). Ghosting of thin unscanned things is inherent to projecting photos |
 | Markers, cursor | what and where: `Navigator.BuildMarkers`; drawing: `SweepMarkers` + marker shader |
 | F1 stats, key hint, floor button labels | `ViewerText` in `Core/Viewer.cs` |
 | Menu, HUD, Esc | `Runtime/UI/MatterportLauncher.cs`, `MatterportHud.cs`, `MpGui.cs` |

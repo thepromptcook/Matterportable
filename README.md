@@ -5,7 +5,8 @@ Turn a Matterport link into a navigable, photoreal environment in **Unity**, **G
 Paste `https://discover.matterport.com/space/rGMMnZDh3Tf` (or any Matterport link or model ID), press Play, and walk
 the space the way Matterport does. Click to move between 360° capture points (sweeps) with the same cross-fading
 transition, drag to look around, step with W/A/S/D, switch to Dollhouse or Floor plan views, and measure anything
-with Matterport's measurement tool.
+with Matterport's measurement tool. Or switch to **Walk** mode and move freely with W/A/S/D: walls, floors, stairs,
+ceilings and furniture are solid.
 
 > **Status.** It works on a real space ("359 N Ridgewood Pl", 58 sweeps) in Unity 6000.5 with URP.
 >
@@ -16,10 +17,10 @@ with Matterport's measurement tool.
 > - Shader HLSL compilation.
 >
 > - The Godot project is compiled, then run headless on the demo house with screenshots of the Inside and
->   Dollhouse views and of measure mode.
+>   Dollhouse views, measure mode and Walk mode.
 >
 > - The web version is built, served and driven in headless Chromium, with screenshots of the demo house (move,
->   Dollhouse, measure mode).
+>   Dollhouse, measure mode, walking into furniture).
 > - On four real Matterport spaces, the Godot and web versions both line up photo and mesh (`--compare`).
 >
 > A PlayMode test covers loading and navigation inside Unity.
@@ -103,12 +104,32 @@ https://github.com/thepromptcook/Matterportable.git?path=/Packages/com.theprompt
 | A · D | Step to the next sweep left / right | Rotate |
 | ← → · Q E | Turn | Rotate |
 | Mouse wheel | Zoom (field of view) | Zoom (distance) |
-| 1 · 2 · 3 | Inside · Dollhouse · Floor plan | |
+| 1 · 2 · 3 · 4 | Inside · Dollhouse · Floor plan · Walk | |
 | Page Up / Down | | Show next / previous floor (or all) |
 | `[` · `]` · Home | Previous / next sweep · start sweep | |
 | P | Auto tour through all sweeps | |
 | F1 · F2 · H | Stats · render debug view · hide the on-screen controls | |
 | M or **Measure** | Measure mode (see below) | Measure mode |
+
+**Walk mode** (4, the **Walk** button, or *Start in Walk mode* in the start menu):
+
+| Input | Walk |
+|---|---|
+| W / ↑ · S / ↓ | Walk forward / back |
+| A · D | Step sideways |
+| Shift | Run |
+| ← → · Q E · Left-drag | Turn and look around |
+| Mouse wheel | Zoom (field of view) |
+| 1 · 2 · 3 | Back to Inside (moves to the nearest sweep) · Dollhouse · Floor plan |
+
+You walk at the height the photos were taken from, and the scanned mesh is solid:
+- **Blocking:** walls, furniture and anything taller than a step (30 cm) stop you, and you slide along them.
+- **Stairs and floors:** you climb stairs and follow floors up and down, and you fall off ledges.
+- **Ceilings and edges:** you can't squeeze under low ceilings or walk off the edge of the scan (open windows,
+  holes in the mesh).
+- **The view:** it blends the photos of the two nearest sweeps in sight, so it is exact at a sweep and a good
+  approximation in between.
+- **Walking needs a floor:** it isn't available at unplaced 360° photos, which have none.
 
 **Measure mode** works like Matterport's: click to place points. With *Continuous lines* on (the default), each click
 adds a connected segment; **Esc** or **✓ Confirm** ends the line, and Esc again leaves measure mode. Points snap to
@@ -260,7 +281,10 @@ dotnet run --project tools/Matterportable.Cli -- diagnose MatterportCache/rGMMnZ
 
 ## Limitations
 
-- **Movement:** sweep-to-sweep only, like Matterport. There is no free walking, as requested.
+- **Walk mode** sees and collides with the scanned mesh only:
+  - Thin things the scan missed, such as railings, lamp poles and chair legs, don't block you, and look a little
+    ghosted between sweeps (the photos are projected onto whatever surface is behind them).
+  - Glass and mirrors are whatever the scan made of them.
 - **Render pipelines:** Built-in and URP are supported; HDRP is not. Godot: Forward+, Mobile and Compatibility.
 - **Web:** the server has no JPEG decoder, so it doesn't run the photo alignment solver. It uses Matterport's
   layout (confirmed on every real space tested), or the calibration Unity or Godot saved for the space.

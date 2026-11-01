@@ -74,6 +74,7 @@ Core viewer (what all three front ends run; tested without any engine)
   Navigator: NavigatorInput (pointer px, buttons, keys, pointer ray) → camera pose + fov, ViewBinding, markers
   PanoramaScheduler: tiers, priorities, LRU budget, pinned on-screen sweeps → IPanoramaLoader (engine) callbacks
   MeasureTool: state machine + snapping → MeasureOverlay (screen-space lines, dots, rings, labels)
+  Walker: Walk mode's body against the BVH (the scanned mesh is the collider: walls, furniture, stairs, ledges)
 Unity runtime (thin adapters)
   MatterportSpace (load coroutine, shader globals from the binding) ─ SpaceMesh ─ PanoramaCache (loader)
     ─ GpuTextures (async decode → GPU blit + mips)
@@ -168,6 +169,15 @@ Web: server (ASP.NET Core, the Core natively: download, bundle, BVH + features) 
     matching what the user sees.
   - **Drawing:** the Core projects into screen space with the navigator's camera (vertical FOV, square pixels): hidden
     pieces faded, white lines with shadows, white pill labels per segment, a + cursor with a ring when snapped.
+- **Walk mode** (free W/A/S/D):
+  - **Body:** spheres from step height (30 cm) to the head, pushed out sideways by their deepest BVH contact
+    (`Bvh.DeepestContact`). A flat contact (a table top or ceiling inside the body) refuses the move.
+  - **Feet:** five downward rays find the highest walkable floor (|n.y| ≥ 0.64) up to a step above. The feet snap to
+    it, falls use gravity, and a move with no floor within 4 m is refused (holes, windows, the scan's edge).
+  - **Sub-steps:** 10 cm each, shorter than the radius, so walls are never crossed.
+  - **View:** the photos of the two nearest sweeps in sight, weighted 1/d − 1/d₃ (d₃: the third nearest) with sticky
+    slots. A sweep joins or leaves the pair at zero weight, so there are no pops; the depth cubes handle occlusion.
+  - **Eye height:** the capture camera's height above its floor.
 - **Transitions:** move the camera linearly with an ease curve, cross-fade with smoothstep(0.1–0.9), and preload
   the target panorama (small tier first). Mode changes fly between poses, fading projection out early when
   leaving a sweep and in late when arriving.
@@ -248,3 +258,11 @@ Web: server (ASP.NET Core, the Core natively: download, bundle, BVH + features) 
 - **Script order:** a component that reads another's per-frame result (measure reads `Navigator.Clicked`) needs
   `[DefaultExecutionOrder]`; Unity's order is otherwise undefined.
 - **The default `ViewBinding` (all zeros) clips everything above y = 0.** Start from `ViewBinding.None`.
+- **Unplaced 360° photos** (no neighbours, no floor below, sometimes positioned at floor level) can't be walked from.
+  Check that the body can stand before entering Walk mode.
+- **Test walking on real scans in a scratch harness** (a console project compiling `Runtime/Core`):
+  - Walk between neighbouring sweeps.
+  - Count only pairs whose straight corridor is clear; Matterport's neighbour lists include pairs with walls
+    between them.
+  - Spawn the body at every sweep.
+  - This found the unplaced-photo case and showed that collision wasn't too strict before any engine ran it.

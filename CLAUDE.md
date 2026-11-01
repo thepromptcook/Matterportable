@@ -23,8 +23,8 @@ The user tests in Unity, Godot and the browser and pastes back Console/Output te
 tools/setup-dev.sh     # once per container: .NET 8 SDK, glslang, NuGet restore
 tools/check.sh         # every check (~2 min): core tests, Unity compile x3, CLI, Godot + web builds and runs, shaders, metas, dead code
 tools/check.sh --fast  # core tests + scripts only
-tools/godot-check.sh   # Godot demo runs → /tmp/matterportable-godot/{inside,dollhouse,measure}.png (+ --sweep N, --view N)
-tools/web-check.sh     # web demo runs in headless Chromium → /tmp/matterportable-web/{inside,dollhouse,measure}.png
+tools/godot-check.sh   # Godot demo runs → /tmp/matterportable-godot/{inside,dollhouse,measure,walk}.png (+ --sweep N, --view N)
+tools/web-check.sh     # web demo runs in headless Chromium → /tmp/matterportable-web/{inside,dollhouse,measure,walk}.png
 tools/web-check.sh --compare <id> 6 && python3 tools/compare_alignment.py /tmp/matterportable-web   # web real-space check
 # real-space check: download, render photo-vs-mesh pairs in Godot, measure alignment (verdict ALIGNED/MISALIGNED)
 dotnet run --project tools/Matterportable.Cli -- download https://my.matterport.com/show/?m=<id>
@@ -45,7 +45,9 @@ Packages/com.thepromptcook.matterportable/
                        and the viewer every front end runs:
     Viewer.cs          ViewerSettings (the one set of defaults), SpaceModel (sweeps, floors, ray casts, load cache),
                        ViewerText (key hint, F1 stats, floor labels)
-    Navigator.cs       Matterport navigation: input → camera pose, ViewBinding (what the shaders show), markers
+    Navigator.cs       Matterport navigation: input → camera pose, ViewBinding (what the shaders show), markers;
+                       Walk mode (free W/A/S/D) with panoramas from the two nearest sweeps in sight
+    Walker.cs          the Walk-mode body: the scanned mesh as collider (walls, furniture, stairs, ledges, ceilings)
     PanoramaScheduler.cs   which panoramas to load/show/drop; engines implement IPanoramaLoader
     Measurement.cs     MeasureTool (measure mode, MeasureOverlay screen-space draw items), MeshFeatures (snapping)
   Runtime/Space/       MatterportSpace (component: load lifecycle, shader globals), SpaceMesh (Unity mesh),
@@ -77,7 +79,7 @@ The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceD
 ## Rules
 
 - **Three front ends, one behaviour.** Viewer behaviour lives once in Core: navigation and transitions
-  (`Navigator`), panorama loading/eviction (`PanoramaScheduler`), measuring and its drawing (`MeasureTool`,
+  (`Navigator`), walking and collision (`Walker`), panorama loading/eviction (`PanoramaScheduler`), measuring and its drawing (`MeasureTool`,
   `MeasureOverlay`), settings (`ViewerSettings`) and on-screen text (`ViewerText`). Change it there, with a test in
   `Tests/Core` (`ViewerTests`, `MeasurementTests`). Engine files are thin adapters, mirrored file by file with the
   same names: they turn input into Core calls, load textures when the scheduler asks, and draw what the Core
@@ -141,6 +143,17 @@ The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceD
     reopening a space, or the Edit-mode preview followed by Play, skips decoding.
   - Anything else static must be reset with `[RuntimeInitializeOnLoadMethod(SubsystemRegistration)]` (see
     `NavInput`).
+- **View modes:** `ViewMode.FromAbove()` (Dollhouse, Floor plan) decides back-face culling, floor clipping and
+  measuring from outside; Inside and Walk are both "inside". Walk starts only where `Walker.Standing` (a floor
+  below and room for the body; unplaced 360° photos have neither) and otherwise stays Inside. Its eye height is the
+  capture camera's height above the floor, so the view at a sweep is exactly the photo. Leaving Walk for Inside moves
+  to the nearest sweep with the usual transition.
+- **Walking physics** (`Walker`): a stack of spheres from one step height (30 cm) up to the head, plus five
+  downward foot rays. A move that leaves no floor within 4 m, or a flat surface inside the body, is refused. Tested by
+  `WalkingTests` on hand-made rooms, furniture and stairs. For real scans, simulate it in a scratch console project
+  that compiles `Runtime/Core`: walking between neighbouring sweeps arrived on 765 of 768 clear paths, and every
+  staircase was climbed. The checks script walking with `--mode walk --yaw D --walk S` (Godot) and
+  `?mode=walk&yaw=D&walk=S` (web).
 - **Measurement** behaviour (clicks, Escape, snapping, axes, units, what shows in which view, colours and line
   widths) lives only in Core `MeasureTool`; the engine files feed it the pointer ray and draw the screen-space
   `MeasureOverlay` items (line, dot, ring, label). While measuring, `Navigator.Measuring` hides markers and leaves
