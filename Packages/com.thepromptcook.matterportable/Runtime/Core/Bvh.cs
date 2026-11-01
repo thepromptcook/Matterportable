@@ -18,7 +18,7 @@ namespace Matterportable.Core
     /// Read-only bounding volume hierarchy over a triangle mesh (binned SAH). Thread-safe after construction;
     /// used for click picking, visibility tests, occlusion depth maps and the alignment solver.
     /// </summary>
-    public sealed class Bvh
+    public sealed class Bvh : ICollider
     {
         struct Node
         {
@@ -282,7 +282,11 @@ namespace Matterportable.Core
 
         /// <summary>Closest hit along the ray within (0, maxDistance]. Two-sided.</summary>
         public bool Raycast(Vec3 origin, Vec3 direction, float maxDistance, out RayHit hit) =>
-            Trace(origin, direction, maxDistance, false, out hit);
+            Trace(origin, direction, maxDistance, false, null, out hit);
+
+        /// <summary>The same, ignoring the triangles marked in <paramref name="skip"/> (by triangle number).</summary>
+        public bool Raycast(Vec3 origin, Vec3 direction, float maxDistance, out RayHit hit, bool[] skip) =>
+            Trace(origin, direction, maxDistance, false, skip, out hit);
 
         /// <summary>
         /// First surface the user can see along the ray: with <paramref name="cullBack"/> (dollhouse, floor plan) back
@@ -313,10 +317,10 @@ namespace Matterportable.Core
             float len = d.Length;
             if (len <= 2 * margin) return false;
             var dir = d / len;
-            return Trace(a + dir * margin, dir, len - 2 * margin, true, out _);
+            return Trace(a + dir * margin, dir, len - 2 * margin, true, null, out _);
         }
 
-        bool Trace(Vec3 o, Vec3 d, float maxDist, bool anyHit, out RayHit hit)
+        bool Trace(Vec3 o, Vec3 d, float maxDist, bool anyHit, bool[] skip, out RayHit hit)
         {
             hit = default;
             if (TriangleCount == 0) return false;
@@ -340,6 +344,7 @@ namespace Matterportable.Core
                     int end = node.LeftOrFirst + node.Count;
                     for (int s = node.LeftOrFirst; s < end; s++)
                     {
+                        if (skip != null && skip[_tri[s]]) continue;
                         // Möller–Trumbore, no back-face culling.
                         var e1 = _e1[s];
                         var e2 = _e2[s];
@@ -401,7 +406,11 @@ namespace Matterportable.Core
         /// closest surface point to the centre, <paramref name="depth"/> how far the surface reaches into the sphere.
         /// False when nothing is within <paramref name="radius"/>. Collision for the walking camera.
         /// </summary>
-        public bool DeepestContact(Vec3 centre, float radius, out Vec3 push, out float depth)
+        public bool DeepestContact(Vec3 centre, float radius, out Vec3 push, out float depth) =>
+            DeepestContact(centre, radius, out push, out depth, null);
+
+        /// <summary>The same, ignoring the triangles marked in <paramref name="skip"/> (by triangle number).</summary>
+        public bool DeepestContact(Vec3 centre, float radius, out Vec3 push, out float depth, bool[] skip)
         {
             push = default;
             depth = 0;
@@ -426,6 +435,7 @@ namespace Matterportable.Core
                 }
                 for (int s = node.LeftOrFirst, end = node.LeftOrFirst + node.Count; s < end; s++)
                 {
+                    if (skip != null && skip[_tri[s]]) continue;
                     var d = centre - ClosestOnTriangle(centre, _v0[s], _e1[s], _e2[s]);
                     float dist2 = d.SqrLength;
                     if (dist2 >= r2) continue;

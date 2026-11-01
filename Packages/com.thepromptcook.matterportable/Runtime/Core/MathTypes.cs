@@ -149,6 +149,9 @@ namespace Matterportable.Core
 
         public static Vec3 operator *(Quat q, Vec3 v) => q.ToMat3() * v;
 
+        /// <summary>The opposite rotation (the conjugate of a unit quaternion).</summary>
+        public Quat Inverse => new Quat(-X, -Y, -Z, W);
+
         public static Quat Slerp(Quat a, Quat b, double t)
         {
             double d = a.X * b.X + a.Y * b.Y + a.Z * b.Z + a.W * b.W;

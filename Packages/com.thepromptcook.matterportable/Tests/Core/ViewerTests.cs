@@ -28,14 +28,15 @@ namespace Matterportable.Tests
 
         sealed class Viewer
         {
-            public readonly SpaceModel Space = TestSpaces.RoomModel();
+            public readonly SpaceModel Space;
             public readonly ViewerSettings Settings = new ViewerSettings();
             public readonly FakeLoader Loader = new FakeLoader();
             public readonly PanoramaScheduler Panos;
             public readonly Navigator Nav;
 
-            public Viewer(int start = 0)
+            public Viewer(int start = 0, SpaceModel space = null)
             {
+                Space = space ?? TestSpaces.RoomModel();
                 Panos = new PanoramaScheduler(Space.Sweeps, Settings, Loader, hasMesh: true);
                 Loader.Scheduler = Panos;
                 Nav = new Navigator(Space, Settings, Panos) { StartSweep = start };
@@ -252,6 +253,32 @@ namespace Matterportable.Tests
             }
             Assert.Greater(last, 0.9f, "near sweep 1 its photo takes over");
             Assert.AreEqual(1, v.Nav.CurrentSweep);
+        }
+
+        [Test]
+        public void WalkModePicksUpFurnitureCarriesItAndPutsItDown()
+        {
+            var table = (new Vec3(1.8f, 0, 1.6f), new Vec3(2.6f, 0.75f, 2.4f));
+            var v = new Viewer(space: TestSpaces.RoomModel(table));
+            Assert.AreEqual(1, v.Space.Props.Count, "the table is a prop");
+            v.Frames(2);
+            v.Nav.SetMode(ViewMode.Walk);
+            v.Nav.Look(45, 35); // from sweep 0 at (1, 1.5, 1), down towards the table
+            v.Frames(30);
+            Assert.AreEqual(0, v.Nav.HighlightProp, "the table is under the view");
+            StringAssert.Contains("F or click: pick it up", ViewerText.PropHint(v.Nav));
+            v.Frames(1, new NavigatorInput { Pressed = NavKeys.Use });
+            Assert.AreEqual(0, v.Nav.Props.Carried);
+            v.Frames(30, new NavigatorInput { Held = NavKeys.TurnLeft }); // turn left: the table swings round with the view
+            v.Frames(1, new NavigatorInput { Pressed = NavKeys.Use });
+            Assert.AreEqual(-1, v.Nav.Props.Carried, "put down");
+            var pose = v.Nav.Props.Poses[0];
+            var middle = pose.Apply(new Vec3(2.2f, 0, 2f));
+            Assert.Less(middle.X, 2.2f - 0.3f, "moved round to the left (towards -X) with the view");
+            Assert.AreEqual(0f, middle.Y, 0.02f, "back on the floor");
+            Assert.IsTrue(v.Nav.Props.AnyMoved);
+            Assert.IsTrue(v.Nav.Props.Raycast(new Vec3(2.2f, 1.5f, 2f), Vec3.Down, 2f, out var hit, out int prop) && prop == -1 && hit.Point.Y < 0.05f,
+                "where it stood, the floor shows");
         }
 
         [Test]

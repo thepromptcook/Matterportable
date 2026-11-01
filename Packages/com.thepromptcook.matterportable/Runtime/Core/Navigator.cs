@@ -19,7 +19,7 @@ namespace Matterportable.Core
     {
         None = 0, Inside = 1, Dollhouse = 1 << 1, Floorplan = 1 << 2, Forward = 1 << 3, Back = 1 << 4, Left = 1 << 5, Right = 1 << 6,
         TurnLeft = 1 << 7, TurnRight = 1 << 8, Next = 1 << 9, Previous = 1 << 10, Home = 1 << 11, FloorUp = 1 << 12, FloorDown = 1 << 13,
-        Tour = 1 << 14, DebugView = 1 << 15, Walk = 1 << 16, Run = 1 << 17,
+        Tour = 1 << 14, DebugView = 1 << 15, Walk = 1 << 16, Run = 1 << 17, Use = 1 << 18,
     }
 
     /// <summary>One frame of input. Pixels have y pointing down; the ray is the pointer's, in the Core frame.</summary>
@@ -88,6 +88,11 @@ namespace Matterportable.Core
         public float Fov { get; private set; }
         public ViewBinding View { get; private set; }
         public readonly List<Marker> Markers = new List<Marker>();
+        /// <summary>Walk mode's movable furniture and doors, where they are now (engines draw each prop with its pose); null
+        /// when the scan has none.</summary>
+        public PropWorld Props { get; }
+        /// <summary>The prop under the pointer that F or a click would act on (engines highlight it), or -1.</summary>
+        public int HighlightProp { get; private set; } = -1;
 
         /// <summary>Height above which geometry is hidden in the current view (floor filter), else +infinity.</summary>
         public float ViewClipHeight => Mode.FromAbove() && !(_anim.Active && !_anim.Target.FromAbove()) ? ClipHeight() : float.PositiveInfinity;
@@ -135,6 +140,7 @@ namespace Matterportable.Core
             _panos = panoramas;
             _panos.IsPinned = s => s == _shownA || s == _shownB;
             Fov = _fov = _targetFov = settings.DefaultFov;
+            if (space.Geometry != null && space.Props.Count > 0) Props = new PropWorld(space.Geometry, space.Props);
         }
 
         IReadOnlyList<SweepInfo> Sweeps => _space.Sweeps;
@@ -163,6 +169,8 @@ namespace Matterportable.Core
         {
             if (_anim.Active || mode == Mode || Sweeps.Count == 0) return;
             if (mode == ViewMode.Walk && _space.Geometry == null) return; // walking needs the mesh to collide with
+            Props?.Drop();
+            HighlightProp = -1;
             if (mode.FromAbove()) StartOrbitMode(mode);
             else if (Mode.FromAbove()) FlyIn(Math.Max(0, CurrentSweep), mode);
             else if (mode == ViewMode.Walk) StartWalk(CameraPosition);
@@ -292,7 +300,8 @@ namespace Matterportable.Core
             }
             if (Math.Abs(input.Scroll) > 0.001f && input.PointerOver)
             {
-                if (!Mode.FromAbove()) _targetFov = Clamp(_targetFov - input.Scroll * _s.ZoomStep, _s.MinFov, _s.MaxFov);
+                if (Mode == ViewMode.Walk && Props?.Carried >= 0) { } // the wheel turns what is carried
+                else if (!Mode.FromAbove()) _targetFov = Clamp(_targetFov - input.Scroll * _s.ZoomStep, _s.MinFov, _s.MaxFov);
                 else _orbitDistanceGoal = Clamp(_orbitDistanceGoal * (float)Math.Exp(-input.Scroll * 0.15f), 1.5f, 500f);
             }
             if (Clicked && !Measuring && !_anim.Active && Mode != ViewMode.Walk)
@@ -493,7 +502,7 @@ namespace Matterportable.Core
         /// stand (no floor below, as at unplaced 360° photos).</summary>
         bool StartWalk(Vec3 eye)
         {
-            var walker = new Walker(_space.Geometry.Bvh, eye, _s.BodyRadius, _s.StepHeight);
+            var walker = new Walker((ICollider)Props ?? _space.Geometry.Bvh, eye, _s.BodyRadius, _s.StepHeight);
             if (!walker.Standing) return false;
             _walker = walker;
             _walkEyeY = _walker.Eye.Y;
@@ -522,6 +531,26 @@ namespace Matterportable.Core
             _walkVelocity = Vec3.Lerp(_walkVelocity, wish * speed, 1f - (float)Math.Exp(-10f * dt));
             _walker.Move(_walkVelocity * dt, dt);
             UpdateWalkPanoramas();
+            if (Props != null) UpdateHands(input);
+        }
+
+        /// <summary>F (<see cref="NavKeys.Use"/>) or a click picks up the furniture under the pointer, or puts down what is
+        /// carried; on a door it swings it open or back. The wheel turns what is carried.</summary>
+        void UpdateHands(in NavigatorInput input)
+        {
+            var eye = new Vec3(_walker.Eye.X, _walkEyeY, _walker.Eye.Z);
+            var origin = input.PointerOver ? input.RayOrigin : eye;
+            var dir = input.PointerOver ? input.RayDirection : CameraRotation * Vec3.Forward;
+            HighlightProp = Props.Carried < 0 && Props.Raycast(origin, dir, PropWorld.Reach, out _, out int prop) ? prop : -1;
+            if ((input.Pressed & NavKeys.Use) != 0 || (Clicked && !Measuring))
+            {
+                if (Props.Carried >= 0) Props.Drop(_walker.Feet, _s.BodyRadius, _walker.EyeHeight);
+                else if (HighlightProp >= 0 && Props.Props[HighlightProp].Kind == PropKind.Door) Props.ToggleDoor(HighlightProp, eye);
+                else if (HighlightProp >= 0) Props.Carry(HighlightProp, eye, _yaw);
+                if (Props.Carried >= 0) HighlightProp = -1;
+            }
+            if (Props.Carried >= 0 && Math.Abs(input.Scroll) > 0.001f) Props.TurnCarried(input.Scroll * 15f);
+            Props.Update(eye, _yaw, input.DeltaTime);
         }
 
         /// <summary>
@@ -707,8 +736,9 @@ namespace Matterportable.Core
             bool validA = a >= 0 && _panos.IsReady(a), validB = b >= 0 && _panos.IsReady(b);
             bool depthA = a >= 0 && _panos.HasDepth(a), depthB = b >= 0 && _panos.HasDepth(b);
             // Standing at the sweep, the camera sees nothing that is hidden from it: no depth test, so the depth map's
-            // resolution draws no lines along outlines, and the view is exactly the photo.
-            bool atSweep = blend <= 0 && a >= 0 && (CameraPosition - SweepPos(a)).Length < 0.01f;
+            // resolution draws no lines along outlines, and the view is exactly the photo. Once props have moved, what
+            // they covered must give way, so the test stays on.
+            bool atSweep = blend <= 0 && a >= 0 && (CameraPosition - SweepPos(a)).Length < 0.01f && !(Props?.AnyMoved ?? false);
             int ia = validA ? a : validB ? b : Math.Max(0, a), last = Sweeps.Count - 1;
             View = new ViewBinding
             {

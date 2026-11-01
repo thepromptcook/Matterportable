@@ -171,10 +171,11 @@ namespace Matterportable.Tests
             return geo;
         }
 
-        /// <summary>The room with three sweeps (1.5 m camera height, two panorama tiers each), neighbours in a chain.</summary>
-        public static SpaceModel RoomModel()
+        /// <summary>The room with three sweeps (1.5 m camera height, two panorama tiers each), neighbours in a chain, and
+        /// optional furniture (found as props, as <see cref="SpaceModel.Load"/> does).</summary>
+        public static SpaceModel RoomModel(params (Vec3 min, Vec3 max)[] furniture)
         {
-            var geo = Room();
+            var geo = Room(0, furniture);
             var sweeps = new List<SweepInfo>();
             var spots = new[] { new Vec3(1, 1.5f, 1), new Vec3(3, 1.5f, 1), new Vec3(3, 1.5f, 2.2f) };
             for (int i = 0; i < spots.Length; i++)
@@ -187,7 +188,9 @@ namespace Matterportable.Tests
             sweeps[0].Neighbors.Add(1);
             sweeps[1].Neighbors.AddRange(new[] { 0, 2 });
             sweeps[2].Neighbors.Add(1);
-            return new SpaceModel(new SpaceManifest { ModelId = "room", Name = "Room" }, new SpaceCalibration(), geo, sweeps);
+            var model = new SpaceModel(new SpaceManifest { ModelId = "room", Name = "Room" }, new SpaceCalibration(), geo, sweeps);
+            if (furniture.Length > 0) model.Props = PropFinder.Find(geo, model.FloorHeights);
+            return model;
         }
     }
 }

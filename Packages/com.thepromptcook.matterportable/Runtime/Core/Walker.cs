@@ -13,7 +13,7 @@ namespace Matterportable.Core
         const float MaxDrop = 4f, Gravity = 9.81f, HeadRoom = 0.12f, MaxSubstep = 0.1f;
         const float MinFloorNormal = 0.64f; // floors are flatter than 50°
 
-        readonly Bvh _bvh;
+        readonly ICollider _world;
         readonly float _radius, _step;
         readonly float[] _spheres; // body sphere heights above the feet, from just above a step to the head
         float _fallSpeed;
@@ -29,9 +29,9 @@ namespace Matterportable.Core
 
         /// <param name="eye">Where the eyes start (a sweep's camera position). The feet go to the floor under it, so the
         /// eye height is the camera's height above that floor and standing there shows exactly its photo.</param>
-        public Walker(Bvh bvh, Vec3 eye, float radius, float stepHeight)
+        public Walker(ICollider world, Vec3 eye, float radius, float stepHeight)
         {
-            _bvh = bvh;
+            _world = world;
             _radius = radius;
             _step = stepHeight;
             Standing = FloorUnder(eye, out float floor);
@@ -69,7 +69,7 @@ namespace Matterportable.Core
             var origin = eye;
             for (int i = 0; i < 8; i++)
             {
-                if (!_bvh.Raycast(origin, Vec3.Down, eye.Y - origin.Y < 2.5f ? 2.5f - (eye.Y - origin.Y) : 0f, out var hit)) return false;
+                if (!_world.Raycast(origin, Vec3.Down, eye.Y - origin.Y < 2.5f ? 2.5f - (eye.Y - origin.Y) : 0f, out var hit)) return false;
                 float below = eye.Y - hit.Point.Y;
                 if (below >= 1f && Math.Abs(hit.Normal.Y) >= MinFloorNormal)
                 {
@@ -128,7 +128,7 @@ namespace Matterportable.Core
                 float worst = 0;
                 Vec3 normal = default;
                 foreach (float h in _spheres)
-                    if (_bvh.DeepestContact(new Vec3(feet.X, feet.Y + h, feet.Z), _radius, out var n, out float depth) && depth > worst)
+                    if (_world.DeepestContact(new Vec3(feet.X, feet.Y + h, feet.Z), _radius, out var n, out float depth) && depth > worst)
                     {
                         worst = depth;
                         normal = n;
@@ -151,7 +151,7 @@ namespace Matterportable.Core
             for (int i = 0; i < 5; i++)
             {
                 float x = feet.X + (i == 1 ? o : i == 2 ? -o : 0), z = feet.Z + (i == 3 ? o : i == 4 ? -o : 0);
-                if (_bvh.Raycast(new Vec3(x, top, z), Vec3.Down, _step + MaxDrop, out var hit) && Math.Abs(hit.Normal.Y) >= MinFloorNormal)
+                if (_world.Raycast(new Vec3(x, top, z), Vec3.Down, _step + MaxDrop, out var hit) && Math.Abs(hit.Normal.Y) >= MinFloorNormal)
                     floor = Math.Max(floor, hit.Point.Y);
             }
             return floor > float.NegativeInfinity;

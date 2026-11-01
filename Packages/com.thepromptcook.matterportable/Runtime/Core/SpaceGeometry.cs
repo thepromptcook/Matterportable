@@ -89,6 +89,23 @@ namespace Matterportable.Core
             return g;
         }
 
+        int[] _triangles;
+
+        /// <summary>The vertex indices of a triangle in the BVH numbering (parts in order).</summary>
+        public void TriangleVertices(int triangle, out int a, out int b, out int c)
+        {
+            var all = _triangles;
+            if (all == null)
+            {
+                all = new int[TriangleCount * 3];
+                foreach (var p in Parts) Array.Copy(p.Indices, 0, all, p.FirstTriangle * 3, p.Indices.Length);
+                _triangles = all;
+            }
+            a = all[3 * triangle];
+            b = all[3 * triangle + 1];
+            c = all[3 * triangle + 2];
+        }
+
         /// <summary>Part index for a BVH triangle number.</summary>
         public int PartOfTriangle(int triangle)
         {

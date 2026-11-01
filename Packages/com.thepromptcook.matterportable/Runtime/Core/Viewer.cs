@@ -56,6 +56,10 @@ namespace Matterportable.Core
         public Vec3 BoundsMin { get; }
         public Vec3 BoundsMax { get; }
         public int FloorCount => _floors.Count;
+        /// <summary>Each floor's height (the median of its sweeps' floor points).</summary>
+        public IReadOnlyList<float> FloorHeights => _floors;
+        /// <summary>The pieces of the scan Walk mode can move (<see cref="PropFinder"/>); empty without a mesh.</summary>
+        public IReadOnlyList<Prop> Props { get; set; } = Array.Empty<Prop>();
         readonly List<float> _floors = new List<float>();
 
         public SpaceModel(SpaceManifest manifest, SpaceCalibration calibration, SpaceGeometry geometry, IReadOnlyList<SweepInfo> sweeps)
@@ -108,6 +112,38 @@ namespace Matterportable.Core
         static (string key, SpaceModel model) _cache;
 
         /// <summary>
+        /// The mesh as the engines draw it: piece 0 is the room, piece i + 1 is prop i (moved by its pose). Each piece
+        /// lists, for every part it uses, the part's index and its triangles' indices into Geometry.Positions.
+        /// </summary>
+        public List<List<(int part, int[] indices)>> MeshPieces()
+        {
+            var pieces = new List<List<(int part, int[] indices)>>();
+            if (Geometry == null) return pieces;
+            var owner = new int[Geometry.TriangleCount];
+            for (int i = 0; i < Props.Count; i++) foreach (int t in Props[i].Triangles) owner[t] = i + 1;
+            for (int i = 0; i <= Props.Count; i++) pieces.Add(new List<(int, int[])>());
+            var lists = new List<int>[Props.Count + 1];
+            for (int part = 0; part < Geometry.Parts.Count; part++)
+            {
+                var p = Geometry.Parts[part];
+                for (int t = 0; t < p.Indices.Length / 3; t++)
+                {
+                    var list = lists[owner[p.FirstTriangle + t]] ?? (lists[owner[p.FirstTriangle + t]] = new List<int>());
+                    list.Add(p.Indices[3 * t]);
+                    list.Add(p.Indices[3 * t + 1]);
+                    list.Add(p.Indices[3 * t + 2]);
+                }
+                for (int i = 0; i < lists.Length; i++)
+                {
+                    if (lists[i] == null || lists[i].Count == 0) continue;
+                    pieces[i].Add((part, lists[i].ToArray()));
+                    lists[i].Clear();
+                }
+            }
+            return pieces;
+        }
+
+        /// <summary>
         /// Decodes the mesh, builds the BVH and the sweeps (call on a worker thread). The last model stays in memory:
         /// reopening a space (or Unity's next Play with fast Enter Play Mode) skips this unless the mesh or the
         /// calibration changed.
@@ -115,9 +151,11 @@ namespace Matterportable.Core
         public static SpaceModel Load(string dir, SpaceManifest manifest, SpaceCalibration cal, ILogSink log)
         {
             var meshPath = manifest.Mesh != null ? CacheLayout.Resolve(dir, manifest.Mesh.File) : null;
-            var key = string.Join("|", dir, meshPath != null ? File.GetLastWriteTimeUtc(meshPath).Ticks : 0, manifest.Sweeps.Count, cal.ToJson().ToJson(false));
+            var objects = Path.Combine(dir, PropFinder.FileName);
+            string Key() => string.Join("|", dir, meshPath != null ? File.GetLastWriteTimeUtc(meshPath).Ticks : 0, manifest.Sweeps.Count,
+                cal.ToJson().ToJson(false), File.Exists(objects) ? File.GetLastWriteTimeUtc(objects).Ticks : 0);
             lock (CacheLock)
-                if (_cache.key == key) return _cache.model;
+                if (_cache.key == Key()) return _cache.model;
             SpaceGeometry geo = null;
             if (meshPath != null)
             {
@@ -127,7 +165,8 @@ namespace Matterportable.Core
                 geo = SpaceGeometry.Build(mesh, cal);
             }
             var model = new SpaceModel(manifest, cal, geo, SweepBuilder.Build(manifest, cal, geo, log));
-            lock (CacheLock) _cache = (key, model);
+            if (geo != null) model.Props = PropFinder.LoadOrFind(dir, geo, model.FloorHeights, log);
+            lock (CacheLock) _cache = (Key(), model); // after objects.json was written
             return model;
         }
     }
@@ -136,7 +175,19 @@ namespace Matterportable.Core
     public static class ViewerText
     {
         public const string KeyHint = "Drag to look · Click to move · W A S D step or walk · ←/→ turn · Wheel zoom · " +
-                                      "1/2/3/4 Inside/Dollhouse/Floor plan/Walk · Shift run · M measure · P tour · F1 stats · H hide · Esc menu";
+                                      "1/2/3/4 Inside/Dollhouse/Floor plan/Walk · Shift run · F move things · M measure · P tour · F1 stats · H hide · Esc menu";
+
+        /// <summary>Walk mode's hint for what the hands hold or the pointer is on, or null.</summary>
+        public static string PropHint(Navigator nav)
+        {
+            var world = nav.Props;
+            if (world == null || nav.Mode != ViewMode.Walk) return null;
+            if (world.Carried >= 0) return world.DropRefused ? "No room here: it would land on you · Wheel: turn it" : "F or click: put it down · Wheel: turn it";
+            int i = nav.HighlightProp;
+            if (i < 0) return null;
+            if (world.Props[i].Kind == PropKind.Door) return world.DoorSwung(i) ? "F or click: swing the door back" : "F or click: open the door";
+            return "F or click: pick it up";
+        }
 
         /// <summary>A floor's button label: its name in Matterport, else "Floor N".</summary>
         public static string FloorLabel(SpaceModel space, int floor)
@@ -146,7 +197,9 @@ namespace Matterportable.Core
         }
 
         /// <summary>Render debug views (F2), in shader order.</summary>
-        public static readonly string[] DebugViews = { "Final", "Mesh texture", "Panorama only", "Visibility A/B", "Blend weights" };
+        public static readonly string[] DebugViews = { "Final", "Mesh texture", "Panorama only", "Visibility A/B", "Blend weights", "Props" };
+        /// <summary>The render view that colours every prop (<see cref="PropWorld.Tint"/>).</summary>
+        public const int PropsView = 5;
 
         /// <summary>The F1 statistics panel.</summary>
         public static string Stats(SpaceModel space, Navigator nav, PanoramaScheduler panos, double fps, double loadSeconds, int texturesLoaded)
