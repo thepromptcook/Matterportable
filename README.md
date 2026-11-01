@@ -44,13 +44,12 @@ The menu also appears automatically when you press Play in an empty scene (no ca
 in `<project>/MatterportCache/<model id>/`, outside `Assets`, so Unity never imports them.
 
 **In the editor:** *GameObject ▸ Matterportable ▸ Matterport Space + Camera* adds a space to any scene. Its inspector
-downloads, previews, aligns and diagnoses the space in Edit mode, and *Tools ▸ Matterportable* has the browser-export
-fallback.
+downloads, previews, aligns and diagnoses the space in Edit mode.
 
 ## Quick start (Godot 4)
 
-Both engines share one C# core: links, downloads, the cache folder, mesh decoding and panorama alignment. They
-behave the same way.
+All three versions share one C# core: links, downloads, the cache folder, mesh decoding, panorama alignment,
+navigation, panorama streaming and the measure tool. They behave the same way.
 
 1. Install the **.NET build of Godot 4.4 or newer** (the download labelled ".NET" on godotengine.org; the standard
    build can't run C#) and the **.NET 8 SDK** (https://dotnet.microsoft.com/download).
@@ -75,8 +74,8 @@ How it fits together:
 - **The server is needed.** Browsers can't fetch Matterport's data directly, so the small server (`web/server`)
   downloads spaces into the same `MatterportCache/` the Unity and Godot projects use. It prepares each space once
   and serves the page.
-- **The page** renders with three.js (WebGL 2). The shared C# Core runs inside it as WebAssembly (ray casts and the
-  measure tool), so measurements behave exactly as in the engines.
+- **The page** renders with three.js (WebGL 2). The shared C# Core runs inside it as WebAssembly (navigation,
+  panorama scheduling and the measure tool), so it behaves exactly as the engines do.
 - **Hosting it for others:** `dotnet publish web/server -c Release -o out` gives a self-contained folder. Run it
   with:
   - `ASPNETCORE_URLS` (address and port)
@@ -108,7 +107,7 @@ https://github.com/thepromptcook/Matterportable.git?path=/Packages/com.theprompt
 | Page Up / Down | | Show next / previous floor (or all) |
 | `[` · `]` · Home | Previous / next sweep · start sweep | |
 | P | Auto tour through all sweeps | |
-| F1 · F2 · F3 · H | Stats · render debug view · sweep labels · hide hints | |
+| F1 · F2 · H | Stats · render debug view · hide the on-screen controls | |
 | M or **Measure** | Measure mode (see below) | Measure mode |
 
 **Measure mode** works like Matterport's: click to place points. With *Continuous lines* on (the default), each click
@@ -119,9 +118,8 @@ and press **Delete** or **✕** to remove it. The panel toggles *Snapping*, *Con
 metres. Lines drawn in Floor plan are 2D and only show there. Measurements are temporary, as they are for Matterport
 visitors. While measuring, dragging still looks around and W/A/S/D still steps between sweeps.
 
-Every value (drag feel, transition speed, zoom limits, marker look, streaming budgets) lives in a
-**Matterport Viewer Settings** asset (*Create ▸ Matterportable ▸ Viewer Settings*). Assign it to the space;
-edits apply live during Play.
+Every value (drag feel, transition speed, zoom limits, marker look, streaming budgets) is in the space's **Settings**
+(Matterport Space inspector; the same defaults in Godot and the web). Edits apply live during Play.
 
 ## Built for fast iteration
 
@@ -138,13 +136,13 @@ edits apply live during Play.
 - **Live debugging.**
   - F1 shows FPS, panorama cache memory, load times and alignment score.
   - F2 cycles render views: mesh texture, panorama only, occlusion visibility and blend weights.
-  - F3 labels sweeps, and P runs an automatic tour.
+  - P runs an automatic tour.
 - **Headless tools.** A CLI (`tools/Matterportable.Cli`) downloads, inspects and diagnoses spaces without Unity.
 - **Tests.** The core suite runs in seconds with `dotnet test tools/Matterportable.Core.Tests`. The same files run in
   Unity's Test Runner (EditMode), alongside Unity-only EditMode tests and a **PlayMode** test that loads a space,
   moves between sweeps and switches views.
 - **Quiet Console, full logs.** Progress goes to `MatterportCache/<id>/debug/load.log`. Turn on **Verbose Logging**
-  in the viewer settings to also see it in the Console.
+  in the space's settings to also see it in the Console.
 - **One-click diagnostics.** **Copy Diagnostics** in the space's inspector puts a redacted report about the
   space on your clipboard: manifest, alignment, load log, mesh structure and API sample. It's all that's needed to
   debug a space.
@@ -161,8 +159,13 @@ link ─► model id ─► GraphQL (same endpoint the web viewer uses) ─► m
                      ▼
      geometry checks (coordinate frames, triangle winding)  ─►  panorama alignment solver  ─► calibration.json
                      ▼
-   Unity: mesh + BVH ─► panorama streaming (texture arrays, LRU, progressive) ─► projection shader + navigator
+   Core viewer: mesh + BVH ─► navigator ─► panorama scheduler (LRU, progressive) ─► view binding per frame
+                     ▼
+   Unity / Godot / web: input in; camera, texture loading and projection shaders out
 ```
+
+The viewer logic (navigation, which panoramas to load and show, measuring, the on-screen text) is written once in
+the Core. Each front end only turns input into Core calls and draws what comes back, so all three behave the same.
 
 **Why it looks like Matterport.** Matterport's realism comes from its photos, not its mesh. At a sweep, the shader
 projects that sweep's 360° panorama onto the scanned geometry, so standing at a sweep shows exactly the original
@@ -191,9 +194,8 @@ its assumptions against the data:
 
 | Symptom | What to do |
 |---|---|
-| *"Matterport's bot protection blocked the request"* | Use the **browser export**: run *Tools ▸ Matterportable ▸ Copy Browser Export Script*. Open `https://my.matterport.com/show/?m=<id>` in your normal browser, paste the script into the developer console (F12 ▸ Console) and press Enter. A `matterport-<id>.json` file downloads. Then run *Tools ▸ Matterportable ▸ Import Browser Export…* and pick it. Do this promptly, because the links inside expire. |
-| Panoramas look rotated, mirrored or don't line up with the mesh | Inspector ▸ **Re-run Panorama Alignment**. If the score shown is low, open **Alignment (advanced)**: change *Sweep rotation*, try **Rotate faces 90°**, or edit faces directly. Changes apply live in Play mode and are saved as manual. |
-| Mesh is sideways or inside out | Inspector ▸ Alignment ▸ *Mesh frame / Sweep frame / Flip winding*. |
+| *"Matterport's bot protection blocked the request"* | Matterport challenged requests from your network. Try again later or from another network. |
+| Panoramas look rotated, mirrored or don't line up with the mesh | Inspector ▸ **Re-run Panorama Alignment**. If it stays wrong, send **Copy Diagnostics**. `calibration.json` in the space folder can also be edited by hand; set `"method": "manual"` so it's kept. |
 | Download, decode or display problem | Click **Copy Diagnostics** in the space's inspector and paste the report into your issue or chat. The raw files are in `MatterportCache/<id>/debug/`. |
 | "Space only offers streamed mesh tiles" | Newer spaces may only have 3D-tile meshes, which aren't supported yet. The space still works panorama-only: click navigation with transitions, skybox rendering. |
 | Pink / black surfaces | The project uses HDRP, which isn't supported. Use the Built-in render pipeline or URP. |
@@ -203,14 +205,13 @@ its assumptions against the data:
 ```
 Packages/com.thepromptcook.matterportable/   the Unity package
   Runtime/Core/        engine-independent C#: link parsing, GraphQL, downloader, DAM decoder, BVH, alignment
-                       solver, demo space, diagnostics
-  Runtime/Space/       MatterportSpace (loading), SpaceMesh, SpaceRenderer (shader state), PanoramaCache, CalibrationRunner
-  Runtime/Navigation/  MatterportNavigator (camera, transitions, view modes), NavInput, SweepMarkers
+                       solver, the viewer (navigation, panorama scheduling, measure tool), demo space, diagnostics
+  Runtime/Space/       MatterportSpace (loading, shader state), SpaceMesh, PanoramaCache, CalibrationRunner
+  Runtime/Navigation/  MatterportNavigator (input → Core navigator → camera), MatterportMeasure, NavInput, SweepMarkers
   Runtime/UI/          MatterportLauncher (in-game menu), MatterportHud
   Runtime/Resources/   shaders (projection, skybox, markers, face blit)
   Editor/              MatterportSpace inspector, editor tools (downloads, diagnostics, menus)
   Tests/               Core (dotnet + Unity) · Editor (EditMode) · PlayMode
-  Tools~/              browser-export.js (fallback exporter)
 Assets/Editor/         project setup (URP, Input System, Launcher scene)
 godot/                 the Godot 4 (.NET) project: compiles Runtime/Core directly, plus Godot versions of the space,
                        panorama cache, navigator, HUD, launcher (scripts/) and shaders (shaders/)
@@ -235,8 +236,6 @@ tools/check.sh
 - the core tests
 - Unity compile checks in editor, player and Input System configurations
 - the CLI build
-- that the browser script matches the query
-- the browser export test
 - the shader compile
 - the Godot compile, plus a headless Godot run of the demo that saves screenshots (`tools/godot-check.sh`)
 - the web build, plus a headless Chromium run of the demo that saves screenshots (`tools/web-check.sh`)
@@ -266,7 +265,7 @@ dotnet run --project tools/Matterportable.Cli -- diagnose MatterportCache/rGMMnZ
 - **Web:** the server has no JPEG decoder, so it doesn't run the photo alignment solver. It uses Matterport's
   layout (confirmed on every real space tested), or the calibration Unity or Godot saved for the space.
 - **Godot editor tools:** the Godot version has the in-game menu, navigation and HUD. The Unity inspector tools
-  (alignment fixes, Copy Diagnostics) have no Godot equivalent yet; use the Unity inspector or the CLI `diagnose`
+  (re-run alignment, Copy Diagnostics) have no Godot equivalent yet; use the Unity inspector or the CLI `diagnose`
   command, which work on the same cache folder.
 - **Platforms:** desktop is the target. Mobile and WebGL are untested (WebGL can't use the downloader).
 - **Mesh tiles:** streamed 3D-tile meshes aren't decoded yet.

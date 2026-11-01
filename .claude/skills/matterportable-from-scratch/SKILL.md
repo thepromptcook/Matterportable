@@ -69,17 +69,23 @@ Core (pure C#)
   → cache folder (manifest.json, mesh, textures, panos, debug)
   DamDecoder → SpaceGeometry (frame conversion, per-material parts, BVH) → SweepBuilder (floor points, floors, neighbours)
   SpaceCalibrator.CheckGeometry + PanoAlignmentSolver → calibration.json      (CalibrationPipeline wires it up)
-Unity runtime
-  MatterportSpace (load coroutine; worker threads for decode/BVH; geometry reused across Play sessions)
-    ─ SpaceMesh ─ SpaceRenderer (shader globals) ─ PanoramaCache ─ GpuTextures (async decode → GPU blit + mips)
-  MatterportNavigator (+ NavInput, SweepMarkers) · MatterportMeasure · MatterportLauncher (start menu) · MatterportHud · MatterportRig
-Core MeasureTool (state machine + snapping + draw list) is shared; each engine only feeds rays and draws the list
-Editor: inspector (download with progress, preview, sweep list, Play-from-sweep, alignment fixes, Copy Diagnostics)
-        + MatterportEditorTools (Tools menu: browser-export import/script, cache folder)
+Core viewer (what all three front ends run; tested without any engine)
+  SpaceModel.Load (decode + BVH + sweeps, cached) · ViewerSettings (one set of defaults) · ViewerText
+  Navigator: NavigatorInput (pointer px, buttons, keys, pointer ray) → camera pose + fov, ViewBinding, markers
+  PanoramaScheduler: tiers, priorities, LRU budget, pinned on-screen sweeps → IPanoramaLoader (engine) callbacks
+  MeasureTool: state machine + snapping → MeasureOverlay (screen-space lines, dots, rings, labels)
+Unity runtime (thin adapters)
+  MatterportSpace (load coroutine, shader globals from the binding) ─ SpaceMesh ─ PanoramaCache (loader)
+    ─ GpuTextures (async decode → GPU blit + mips)
+  MatterportNavigator (NavInput → Navigator → camera, SweepMarkers) · MatterportMeasure · MatterportLauncher · MatterportHud · MatterportRig
+Editor: inspector (download with progress, preview, sweep list, Play-from-sweep, re-run alignment, Copy Diagnostics)
+        + MatterportEditorTools (downloads, diagnostics, cache folder menu)
 Project: Assets/Editor/MatterportProjectSetup.cs (URP + Input System + fast Enter Play Mode + Launcher scene)
-Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; scripts/ mirror the Unity runtime file
-  by file (MatterportSpace = space + mesh + renderer, PanoramaCache, MatterportNavigator, SweepMarkers, Launcher,
-  Hud, ViewerSettings, GodotUtil); shaders/ are ports of the HLSL. Same cache folder, so one download serves both.
+Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; scripts/ are the same adapters file by
+  file (MatterportSpace, PanoramaCache, MatterportNavigator, MatterportMeasure, SweepMarkers, Launcher, Hud,
+  GodotUtil); shaders/ are ports of the HLSL. Same cache folder, so one download serves all three.
+Web: server (ASP.NET Core, the Core natively: download, bundle, BVH + features) · wasm/Bridge.cs (the Core as
+  WebAssembly: one Frame call per frame) · client/js (three.js adapters with the same file names)
 ```
 
 ## Build order (each step has a check before moving on)
@@ -92,8 +98,7 @@ Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; sc
    - Check: link and JSON tests pass.
 3. **GraphQL and downloader.**
    - Build the query builder, the self-healing runner, the parser, the HTTP abstraction and the downloader.
-   - Check: tests against `FakeMatterport` pass, including pruning, expired-link refresh and the browser-export
-     import.
+   - Check: tests against `FakeMatterport` pass, including pruning and expired-link refresh.
 4. **Geometry:** protobuf reader/writer, DAM decoder/writer, BVH (binned SAH), SpaceGeometry, SweepBuilder.
    - Check: DAM round trips (simple and quantized), BVH matches brute force.
 5. **Synthetic space and solver:** procedural house, cube math, alignment solver, geometry checks, pipeline.
@@ -103,8 +108,13 @@ Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; sc
    - Write the shaders: projection with analytic gradients, depth-based occlusion and A/B blend weights; skybox;
      markers; face blit.
    - Check: glslang compiles every stage.
-7. **Runtime:** MatterportSpace loading, PanoramaCache, SpaceRenderer, SpaceMesh, navigator, HUD, launcher, rig.
-   - Check: the editor, player and Input System compile configurations all pass.
+7. **Viewer in Core, then runtimes:** `Navigator`, `PanoramaScheduler`, `MeasureTool` with tests driving them
+   frame by frame (fake loader, a three-sweep room). Then each runtime as adapters: MatterportSpace loading and
+   shader state, PanoramaCache (loader), SpaceMesh, navigator (input → Core), HUD, launcher, rig.
+   - Check: Core tests, then the editor, player and Input System compile configurations all pass.
+   - Writing the viewer once in Core (instead of per engine) is what keeps three front ends identical. The first
+     version wrote it three times and drifted (Unity had features the others lacked); moving it into Core removed
+     about 2,900 lines of engine code for about 1,100 lines of Core.
 8. **Editor and project:** inspector, editor tools, setup script, `.meta` generation, PlayMode test.
    - Check: `tools/check.sh` is all green.
 9. **Real-space fidelity check:**
@@ -156,8 +166,8 @@ Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; sc
     the drag direction, and takes the point on that axis line nearest the pointer ray.
   - **Visibility:** outside Inside view, picks and occlusion skip back faces and geometry above the clip height,
     matching what the user sees.
-  - **Drawing:** in screen space: hidden pieces faded, white lines with shadows, white pill labels per segment, a +
-    cursor with a ring when snapped.
+  - **Drawing:** the Core projects into screen space with the navigator's camera (vertical FOV, square pixels): hidden
+    pieces faded, white lines with shadows, white pill labels per segment, a + cursor with a ring when snapped.
 - **Transitions:** move the camera linearly with an ease curve, cross-fade with smoothstep(0.1–0.9), and preload
   the target panorama (small tier first). Mode changes fly between poses, fading projection out early when
   leaving a sweep and in late when arriving.
@@ -170,7 +180,7 @@ Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; sc
     `Update`.
   - Escape is shared with the launcher's menu: make the measure tool own it while open.
   - Godot's `Input.ParseInputEvent` is delivered on a later frame, so script multi-step input checks across frames.
-  - A C# local function can't capture a `ref` parameter; copy it to a local first.
+  - A C# local function can't capture a `ref` or `in` parameter (CS1628); copy it to a local first.
 - **Web:**
   - three r169 GLSL3 `ShaderMaterial`s don't get `gl_FragColor`; declare `layout(location = 0) out vec4`.
   - Sampler arrays can't be indexed by a run-time value in WebGL 2: use six samplers and a branch.
@@ -201,8 +211,9 @@ Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; sc
     their next pull ("untracked files would be overwritten").
   - Put the project in a subfolder: at the repository root, Godot would scan Unity's `Library/`.
 
-- **Cloudflare blocks the viewer page from cloud containers.** The GraphQL endpoint works from the user's machine.
-  Provide a browser-console export as a fallback instead of any bypass.
+- **Cloudflare blocks the viewer page from cloud containers.** The GraphQL endpoint and CDN work from both the
+  user's machine and cloud containers. Never bypass a challenge. (A browser-console exporter fallback was built and
+  later removed: no one needed it, and it had to be regenerated on every query change.)
 - **Guessed GraphQL fields can be wrong** (`floors.index`, `skyboxes.options`, `locations.anchor` don't exist).
   Self-healing plus `debug/graph-pruned-fields.txt` turns this into a one-round fix.
 - **DAM UVs weren't where expected**, so detect them generically. The **winding is inverted**; detect that too.
@@ -232,3 +243,8 @@ Godot (godot/, .NET): Matterportable.csproj compiles Runtime/Core/** by link; sc
 - **Build only what the main workflow needs.** The user wanted the in-game launcher, so the editor import window
   and the build-scene bundling hook became dead weight and were removed. Keep the editor to inspector actions and
   menus.
+- **Unity settings:** a `[Serializable]` Core class works as an inspector field (no ScriptableObject needed), but
+  inspector edits may replace the instance; copy them into the one the Core holds in `OnValidate`.
+- **Script order:** a component that reads another's per-frame result (measure reads `Navigator.Clicked`) needs
+  `[DefaultExecutionOrder]`; Unity's order is otherwise undefined.
+- **The default `ViewBinding` (all zeros) clips everything above y = 0.** Start from `ViewBinding.None`.

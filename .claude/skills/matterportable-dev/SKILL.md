@@ -1,6 +1,6 @@
 ---
 name: matterportable-dev
-description: Use when changing, fixing or extending Matterportable (Matterport link → navigable environment in Unity and Godot 4, sharing one C# Core) or when the user pastes Unity Console / Godot Output text, a diagnostics report or a screenshot from running it. Covers toolchain setup without Unity, where each behaviour lives, the verification loop and how to turn user reports into fixes.
+description: Use when changing, fixing or extending Matterportable (Matterport link → navigable environment in Unity, Godot 4 and a web browser, sharing one C# Core that also holds the viewer logic) or when the user pastes Unity Console / Godot Output / browser console text, a diagnostics report or a screenshot from running it. Covers toolchain setup without Unity, where each behaviour lives, the verification loop and how to turn user reports into fixes.
 ---
 
 # Working on Matterportable
@@ -9,9 +9,13 @@ Claude can't run Unity or reach Matterport's viewer from a cloud container, but 
 versions** headless (Godot under xvfb, the web page in Playwright's Chromium) and download public spaces.
 The loop is:
 
-1. Change the code. If it's runtime behaviour, change both engines (table in CLAUDE.md).
-2. Run `tools/check.sh`. Then **look at** `/tmp/matterportable-godot/inside.png` and `dollhouse.png` with Read.
-   Rendering, projection and navigation bugs usually show there before the user ever sees them.
+1. Change the code. **Viewer behaviour** (navigation, transitions, which panoramas load or show, measuring,
+   settings, on-screen text) is Core code: `Navigator`, `PanoramaScheduler`, `MeasureTool`, `ViewerSettings`,
+   `ViewerText`, tested by `ViewerTests` / `MeasurementTests` in seconds. **Adapters** (input mapping, texture
+   loading, drawing) exist once per front end; change all three (table in CLAUDE.md).
+2. Run `tools/check.sh`. Then **look at** `/tmp/matterportable-godot/*.png` and `/tmp/matterportable-web/*.png`
+   with Read. Rendering, projection and navigation bugs usually show there before the user ever sees them; a Core
+   change that renders right in Godot and the web is right in Unity too, since all three run the same code.
 3. Commit and push.
 4. The user pulls and tests in Unity 6000.5 and/or Godot 4 (.NET).
 5. The user pastes back Console/Output text or diagnostics.
@@ -68,10 +72,9 @@ tools/check.sh
 - the core NUnit suite (`dotnet test`)
 - three Unity compile configurations against Unity's reference assemblies (editor + tests, player, Input System)
 - the CLI build
-- a check that `Tools~/browser-export.js` matches the C# query
-- the browser exporter against a mock endpoint (node)
 - the shader HLSL through glslang
 - the Godot C# compile (`-warnaserror`) and the headless Godot demo run (`tools/godot-check.sh`)
+- the web build with .NET 8 and with the user's .NET 10, and the headless Chromium demo run (`tools/web-check.sh`)
 - `.meta` coverage
 - the dead-code scan (`tools/find_unused.py`)
 
@@ -86,17 +89,19 @@ tools/check.sh
 | Sideways, mirrored or inside-out mesh | `SpaceCalibrator.CheckGeometry` (frames, winding) in `PanoAlignmentSolver.cs`; `Frames` in `MathTypes.cs` |
 | Panoramas rotated or not lining up with geometry | `PanoAlignmentSolver.Solve`; `calibration.json` (method/score/faces); shader `MP_PanoCoords` |
 | Slow or failed load, Play-mode errors | `Runtime/Space/MatterportSpace.cs` `LoadRoutine`; `debug/load.log` |
-| Panorama streaming, memory, pop-in | `Runtime/Space/PanoramaCache.cs`; settings `panoMaxSize`, `panoMemoryBudgetMB`, `prefetchNeighbors` |
-| Smearing during moves | depth maps (`PanoramaCache.ComputeDepth`) + `MP_Visibility` / `MP_BlendWeights` in `MatterportCommon.hlsl` |
-| Click / WASD / drag / zoom feel, dollhouse, floor plan | `Runtime/Navigation/MatterportNavigator.cs` + `MatterportViewerSettings` |
-| Markers, cursor | `SweepMarkers.cs`, `MatterportMarker.shader` |
+| Panorama streaming, memory, pop-in | what/when: Core `PanoramaScheduler.cs` (tiers, priorities, LRU budget, pinned sweeps); how: each front end's `PanoramaCache` (decode, upload); settings `PanoMaxSize`, `PanoMemoryBudgetMB`, `PrefetchNeighbors` in `ViewerSettings` (`Core/Viewer.cs`) |
+| Smearing during moves | depth cubes (scheduler `RequestDepth` → `PanoramaCache.ComputeDepth`), `UseDepth` in `Navigator.PushView`, `MP_Visibility` / `MP_BlendWeights` in `MatterportCommon.hlsl` |
+| Click / WASD / drag / zoom feel, transitions, dollhouse, floor plan, tour | Core `Navigator.cs` + `ViewerTests`; settings in `ViewerSettings`. The `MatterportNavigator` adapters only map input and apply the pose (web: through `Bridge.Frame`) |
+| Wrong panorama shown, bad blend, floors not clipped, culling | `Navigator.PushView` → `ViewBinding` → `MatterportSpace.ApplyView` (Unity, Godot) / `MatterportSpace.update` (web) |
+| Markers, cursor | what and where: `Navigator.BuildMarkers`; drawing: `SweepMarkers` + marker shader |
+| F1 stats, key hint, floor button labels | `ViewerText` in `Core/Viewer.cs` |
 | Menu, HUD, Esc | `Runtime/UI/MatterportLauncher.cs`, `MatterportHud.cs`, `MpGui.cs` |
 | Input not working | `NavInput.cs` (legacy vs Input System via `MATTERPORTABLE_INPUT_SYSTEM`) |
 | Inspector, editor downloads, Tools menu | `Editor/MatterportSpaceEditor.cs`, `Editor/MatterportEditorTools.cs` |
 | Images slow or hitching | `Runtime/Space/GpuTextures.cs` (async decode → GPU) used by `PanoramaCache` and `SpaceMesh` |
 | Project setup, URP, startup warnings | `Assets/Editor/MatterportProjectSetup.cs` |
-| Measure mode: clicks, snapping, Shift/Alt, units, labels, what shows where | Core `Runtime/Core/Measurement.cs` (`MeasureTool`, `MeshFeatures`) + `Tests/Core/MeasurementTests.cs`; drawing and panel in `Navigation/MatterportMeasure.cs` (Unity) and `godot/scripts/MatterportMeasure.cs` |
-| Clicks go through UI, or Escape opens the menu while measuring | `MpGui.Block` / `BlockedGuiRects` (cleared in the navigator's `LateUpdate`), `MatterportMeasure.OwnsEscape`; Godot: `SetInputAsHandled` in `MatterportMeasure._UnhandledInput` |
+| Measure mode: clicks, snapping, Shift/Alt, units, labels, colours, what shows where | Core `Runtime/Core/Measurement.cs` (`MeasureTool`, `MeasureOverlay` screen-space items, `MeshFeatures`) + `Tests/Core/MeasurementTests.cs`; panels in the three `MatterportMeasure` files |
+| Clicks go through UI, or Escape opens the menu while measuring | `MpGui.Block` / `BlockedGuiRects` (`MatterportNavigator.PointerOverView`, cleared in its `LateUpdate`), `MatterportMeasure.OwnsEscape`; Godot: `SetInputAsHandled` in `MatterportMeasure._UnhandledInput` |
 | Web: anything above | same name in `web/client/js/` (table in CLAUDE.md); server in `web/server/`, Core bridge in `web/wasm/Bridge.cs` |
 | Web: blank page, "Failed to fetch", 404 on `_framework` | the server must be built (`dotnet build web/server` publishes the WebAssembly Core into its wwwroot); page errors are in the browser console and in `tools/web-check.sh` output |
 | Web: space never opens | the server's job status (`api/spaces/<id>/status`), `MatterportCache/<id>/web/` (delete it to rebuild the bundle) |
@@ -110,6 +115,8 @@ tools/check.sh
 ## 3. Making a change
 
 - **Core logic** (`Runtime/Core`): add or extend a test in `Packages/.../Tests/Core`.
+  - Viewer behaviour: `ViewerTests` runs the `Navigator` frame by frame with a fake loader on
+    `TestSpaces.RoomModel()` (three sweeps in a room); clicks are rays aimed at a point (`ClickAt`).
   - The fake Matterport server (`FakeMatterport.cs`) and the procedural house (`SyntheticSpace`) let you
     reproduce download, decode and alignment problems end to end.
   - To simulate a format the user's data revealed, make `SyntheticSpace` or `DamWriter` produce it, then test
@@ -125,16 +132,17 @@ tools/check.sh
   - pointer input comes through `_UnhandledInput`, so UI controls consume their own clicks (no blocked-rect lists)
   - `async`/`await` resumes on the main thread; use `Task.Run` for decode and `await ToSignal(GetTree(), "process_frame")`
     to wait a frame
-  - the camera looks down -Z, and yaw is counter-clockwise
+  - poses come from the Core (Unity's frame); convert with `GodotUtil.ToGodot` (positions mirror Z, rotations
+    take (-x, -y, z, w)), and the Godot camera then looks down -Z as usual
   - set state that must survive a node's first-frame setup through a field it applies at the end of setup (like
     `MatterportNavigator.StartMode`)
 - **New files:** run `python3 tools/generate_metas.py`. Move scripts with `git mv` of both the file and its `.meta`.
-- **Query changes:** regenerate `Tools~/browser-export.js`, and update the `FakeMatterport` schema.
+- **Query changes:** update the `FakeMatterport` schema.
 - **Deprecations:** the user sees Unity 6.5 deprecation warnings that the 2021 reference assemblies can't show.
   When one is reported, add a version-guarded path (`#if UNITY_6000_5_OR_NEWER`) inside a shared helper.
 - **Domain reload is off** in the user's project (fast Enter Play Mode), so statics survive between Play sessions.
   Reset new static state in `[RuntimeInitializeOnLoadMethod(SubsystemRegistration)]`, or key caches on everything
-  they depend on, as the geometry cache in `MatterportSpace.LoadGeometry` does.
+  they depend on, as `SpaceModel.Load` does.
 - **Keep the codebase small.**
   - Delete code that no workflow reaches (the in-game launcher is the main entry point; the editor only adds
     inspector actions and menus).
@@ -153,18 +161,20 @@ the GPU.
 4. **First load only: alignment.** The ~50 small images are decoded on the main thread (Unity's decoder), then
    `CalibrationPipeline` runs on a worker. The result is saved; a failed solve is saved as `unsolved` and not
    retried.
-5. **Geometry.** `LoadGeometry` decodes the DAM, builds the BVH and the sweeps on a worker. It is reused across Play
-   sessions while the mesh and calibration are unchanged.
-6. **Main-thread setup** (milliseconds): the Unity mesh, `SpaceRenderer` and `PanoramaCache`, then the `Loaded`
-   event. The navigator arrives at the start sweep.
+5. **Model.** `SpaceModel.Load` decodes the DAM, builds the BVH and the sweeps on a worker. It is reused across Play
+   sessions (and after the Edit-mode preview) while the mesh and calibration are unchanged.
+6. **Main-thread setup** (milliseconds): the Unity mesh, shader state, `PanoramaCache` and `PanoramaScheduler`.
+   The navigator's next frame creates the Core `Navigator`, which arrives at the start sweep and requests its
+   panoramas and depth cube.
 7. **Panoramas.** The 512 px preview comes first, then 2048 px, one load per sweep at a time (`GpuTextures`: decode
    off the main thread, GPU blit and mips). Up to 4 neighbours are prefetched.
 8. **Mesh textures** decode in parallel off the main thread into mipmapped render textures.
 9. **Depth maps**, one per visited sweep, are ray-cast on workers as half floats and uploaded at one per frame.
 
 Per frame, the main thread does:
-- `SpaceRenderer.Apply`: shader globals
-- the navigator's hover ray-cast against the BVH
+- `Navigator.Update`: input → camera pose, the hover ray-cast against the BVH, the view binding, markers
+- `PanoramaScheduler.Update`: start queued loads, drop over budget
+- `MatterportSpace.ApplyView`: shader globals
 - up to about 20 marker draws
 - IMGUI (HUD and launcher)
 
@@ -193,7 +203,7 @@ When fidelity is in doubt, test on real spaces here instead of asking the user. 
 - **Godot Output / Debugger ▸ Errors:** the same `[Matterportable]` lines (`GD.PushWarning` / `GD.PushError`).
   Ask for the Errors tab text, and for `MatterportCache/<id>/debug/load.log`, which both engines write.
 - **Console lines** carry the first line plus a stack trace. The `[Matterportable]` prefix marks ours. Info lines
-  only appear when `verboseLogging` is on, so warnings and errors are the signal.
+  only appear when the space's `VerboseLogging` setting is on, so warnings and errors are the signal.
 - **Diagnostics report** (inspector ▸ Copy Diagnostics, or `matterportable diagnose`): the manifest summary,
   `calibration.json`, pruned query fields, the last `load.log`, the DAM structure dump and a redacted API sample.
   Ask for it whenever a space downloads or renders wrongly.
@@ -211,5 +221,5 @@ After learning a new fact about Matterport's data, record it in [matterport-form
 1. Run `tools/check.sh`.
 2. Commit with a message that says what changed for the user.
 3. Push to the session's branch.
-4. In the reply, tell the user what to pull and what to look for in Unity and Godot: which Console/Output lines
-   should change, or which view to check.
+4. In the reply, tell the user what to pull and what to look for in Unity, Godot and the browser: which
+   Console/Output lines should change, or which view to check.

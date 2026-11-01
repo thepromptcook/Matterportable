@@ -21,7 +21,7 @@ The user tests in Unity and Godot and pastes back Console/Output text or a diagn
 
 ```bash
 tools/setup-dev.sh     # once per container: .NET 8 SDK, glslang, NuGet restore
-tools/check.sh         # every check (~20 s): core tests, Unity compile x3, CLI, browser script, shaders, metas, dead code
+tools/check.sh         # every check (~2 min): core tests, Unity compile x3, CLI, Godot + web builds and runs, shaders, metas, dead code
 tools/check.sh --fast  # core tests + scripts only
 tools/godot-check.sh   # Godot demo runs → /tmp/matterportable-godot/{inside,dollhouse,measure}.png (+ --sweep N, --view N)
 tools/web-check.sh     # web demo runs in headless Chromium → /tmp/matterportable-web/{inside,dollhouse,measure}.png
@@ -31,7 +31,7 @@ dotnet run --project tools/Matterportable.Cli -- download https://my.matterport.
 xvfb-run -a -s "-screen 0 960x540x24" /opt/godot/godot --path godot --resolution 960x540 --rendering-method gl_compatibility -- --open <id> --compare /tmp/cmp/<id>
 python3 tools/compare_alignment.py /tmp/cmp/<id>
 dotnet test tools/Matterportable.Core.Tests --filter Alignment
-dotnet run --project tools/Matterportable.Cli -- help   # download / import / demo / info / align / diagnose / browser-script
+dotnet run --project tools/Matterportable.Cli -- help   # download / demo / info / diagnose
 ```
 
 Add `/opt/dotnet` to `PATH` if `dotnet` isn't found.
@@ -41,27 +41,31 @@ Add `/opt/dotnet` to `PATH` if `dotnet` isn't found.
 ```
 Packages/com.thepromptcook.matterportable/
   Runtime/Core/        engine-agnostic C# (noEngineReferences): link parsing, JSON, self-healing GraphQL
-                       client, downloader, DAM decoder, BVH, frames, alignment solver, synthetic space, diagnostics
-  Runtime/Space/       MatterportSpace (component: load lifecycle + queries), SpaceMesh (Unity mesh), SpaceRenderer
-                       (shader globals), PanoramaCache (streaming), GpuTextures (async image → GPU),
-                       CalibrationRunner, DemoSpace
-  Runtime/Core/Measurement.cs   MeasureTool (Matterport measure mode: snapping, axis lock, units, draw list),
-                       MeshFeatures (crease edges/corners, wall axes) - shared by both engines' measure UI
-  Runtime/Navigation/  MatterportNavigator (camera, transitions, view modes), MatterportMeasure, NavInput, SweepMarkers
+                       client, downloader, DAM decoder, BVH, frames, alignment solver, synthetic space, diagnostics,
+                       and the viewer every front end runs:
+    Viewer.cs          ViewerSettings (the one set of defaults), SpaceModel (sweeps, floors, ray casts, load cache),
+                       ViewerText (key hint, F1 stats, floor labels)
+    Navigator.cs       Matterport navigation: input → camera pose, ViewBinding (what the shaders show), markers
+    PanoramaScheduler.cs   which panoramas to load/show/drop; engines implement IPanoramaLoader
+    Measurement.cs     MeasureTool (measure mode, MeasureOverlay screen-space draw items), MeshFeatures (snapping)
+  Runtime/Space/       MatterportSpace (component: load lifecycle, shader globals), SpaceMesh (Unity mesh),
+                       PanoramaCache (IPanoramaLoader), GpuTextures (async image → GPU), CalibrationRunner, DemoSpace
+  Runtime/Navigation/  MatterportNavigator (input → Core Navigator → camera), MatterportMeasure, NavInput, SweepMarkers
   Runtime/UI/          MatterportLauncher (in-game start menu), MatterportHud, MpGui (shared styles)
-  Runtime/             MatterportRig (space + camera), MatterportViewerSettings, Utilities
+  Runtime/             MatterportRig (space + camera), Utilities
   Runtime/Resources/Matterportable/   shaders: Mesh (projection), Skybox, Marker, FaceBlit + MatterportCommon.hlsl
   Editor/              MatterportSpaceEditor (inspector), MatterportEditorTools (downloads with progress, diagnostics, menus)
-  Tests/Core/          NUnit, run by dotnet AND Unity · Tests/Editor/ Unity EditMode · Tests/PlayMode/ end-to-end
-  Tools~/browser-export.js   generated from the C# query (fallback exporter)
+  Tests/Core/          NUnit, run by dotnet AND Unity (ViewerTests drive the Navigator with a fake loader)
+                       · Tests/Editor/ Unity EditMode · Tests/PlayMode/ end-to-end
 Assets/Editor/MatterportProjectSetup.cs   project-level setup (URP, Input System, fast Enter Play Mode, Launcher scene)
 godot/                Godot 4 .NET project (Matterportable.csproj links Runtime/Core/**)
   scripts/             MatterportSpace, PanoramaCache, MatterportNavigator, MatterportMeasure, SweepMarkers, Launcher, Hud,
-                       ViewerSettings, GodotUtil (frame conversion, worker-thread image decode, cache path, demo)
+                       GodotUtil (frame conversion, worker-thread image decode, cache path, demo)
   shaders/             matterport_common.gdshaderinc (port of MatterportCommon.hlsl), mesh, sky, marker
 web/server/           Program.cs (API + static files), SpaceService (download/prepare jobs), WebBundle (space.json,
                        geometry.bin, bvh.bin, features.bin in MatterportCache/<id>/web/)
-web/wasm/Bridge.cs    [JSExport] surface of the Core: Load, Raycast, Occluded, Measure*
+web/wasm/Bridge.cs    [JSExport] surface of the Core: Load, Frame (one call per frame: input in; camera, binding,
+                       markers, loader commands out - layout in its comment), Navigate, Pano*/DepthReady, Measure*
 web/client/           index.html, style.css, vendor/three.module.min.js (r169, MIT), js/ mirroring the engine files
 tools/                CLI, test runner project, UnityCompileCheck (+ API stubs), check scripts, godot-check.sh, web-check.sh
 ```
@@ -72,34 +76,35 @@ The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceD
 
 ## Rules
 
-- **Two engines, one behaviour.** Put logic that both engines need in `Runtime/Core`. Engine code is mirrored file
-  by file, with the same names and structure. A behaviour change in one engine's runtime must be mirrored in the
-  other in the same commit:
+- **Three front ends, one behaviour.** Viewer behaviour lives once in Core: navigation and transitions
+  (`Navigator`), panorama loading/eviction (`PanoramaScheduler`), measuring and its drawing (`MeasureTool`,
+  `MeasureOverlay`), settings (`ViewerSettings`) and on-screen text (`ViewerText`). Change it there, with a test in
+  `Tests/Core` (`ViewerTests`, `MeasurementTests`). Engine files are thin adapters, mirrored file by file with the
+  same names: they turn input into Core calls, load textures when the scheduler asks, and draw what the Core
+  returns. An adapter change in one front end must be mirrored in the others in the same commit:
 
   | Unity (`Packages/.../Runtime/`) | Godot (`godot/`) | Web (`web/client/js/`) |
   |---|---|---|
-  | `Space/MatterportSpace.cs` + `SpaceMesh` + `SpaceRenderer` | `scripts/MatterportSpace.cs` | `MatterportSpace.js` |
+  | `Space/MatterportSpace.cs` + `SpaceMesh` | `scripts/MatterportSpace.cs` | `MatterportSpace.js` |
   | `Space/PanoramaCache.cs` + `GpuTextures` | `scripts/PanoramaCache.cs` | `PanoramaCache.js` |
-  | `Navigation/MatterportNavigator.cs` + `NavInput` | `scripts/MatterportNavigator.cs` | `MatterportNavigator.js` |
+  | `Navigation/MatterportNavigator.cs` + `NavInput` | `scripts/MatterportNavigator.cs` | `MatterportNavigator.js` (+ `Bridge.Frame`) |
   | `Navigation/SweepMarkers.cs` | `scripts/SweepMarkers.cs` | `SweepMarkers.js` |
   | `Navigation/MatterportMeasure.cs` (IMGUI) | `scripts/MatterportMeasure.cs` (Control) | `MatterportMeasure.js` (canvas 2D) |
   | `UI/MatterportLauncher.cs`, `UI/MatterportHud.cs` | `scripts/Launcher.cs`, `scripts/Hud.cs` | `Launcher.js`, `Hud.js` |
-  | `MatterportViewerSettings.cs` | `scripts/ViewerSettings.cs` | `ViewerSettings.js` |
   | `Resources/Matterportable/*.shader` + `MatterportCommon.hlsl` | `shaders/*.gdshader` + `.gdshaderinc` | `shaders.js` |
 
 - **Keep `Runtime/Core` free of `UnityEngine`.** Put Unity glue in `Runtime/Space|Navigation|UI`. New Core logic
   gets a test in `Tests/Core`.
 - **Every package file and folder needs a `.meta`.** Run `python3 tools/generate_metas.py`. When moving a script,
   `git mv` its `.meta` too: scenes reference scripts by GUID.
-- **If you change `MatterportQueries`:**
-  - regenerate `Tools~/browser-export.js` with the CLI `browser-script` command
-  - update the schema in `Tests/Core/FakeMatterport.cs`
-  - `check.sh` fails if the script is stale
+- **If you change `MatterportQueries`,** update the schema in `Tests/Core/FakeMatterport.cs`.
+- **The Core and Unity code is C# 8** (Unity's compiler): no `new()`, `is not`, records or init. Godot scripts may use
+  newer C#. A local function can't capture an `in` parameter (CS1628): copy it to a local first.
 - **Unity 6 deprecations aren't caught here.** The compile check uses the Unity 2021 API, so put any API that
   differs between versions behind one helper. `MpUtil.FindFirst` / `MpUtil.FindAll` already wrap the find APIs.
   Watch for new deprecations in the user's Console.
 - **Keep the Console quiet.** Info messages go to `BufferLog` and `debug/load.log`, and reach the Console only
-  with `verboseLogging`. Use warnings only for things the user should act on.
+  with `settings.VerboseLogging`. Use warnings only for things the user should act on.
 - **Godot specifics.** Godot rewrites the csproj SDK version to the editor's version when it opens the project.
   Keep `Godot.NET.Sdk/4.4.0` committed; `godot-check.sh` restores it. Commit Godot's `.uid` files in the same commit as the script: if the user's Godot generates one first, their pull fails with "untracked files would be overwritten" (`check.sh` enforces this). Godot needs
   `dotnet` on PATH.
@@ -124,20 +129,26 @@ The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceD
   - `solver` / `synthetic`: solved
   - `unsolved`: tried and failed, so it isn't retried automatically
   - `manual`: set by the user in the inspector, and kept
-- **Shader globals** are written only by `SpaceRenderer.Apply` (once per frame, in `LateUpdate`). Every shader
-  declares them in `MatterportCommon.hlsl`. Change both together.
+- **Core frame = Unity frame**, local to the space: the Unity adapters convert rays and poses through
+  `space.transform`, and a Core `Quat` is a Unity `Quaternion` as it is. The camera looks along +Z; Godot/three.js
+  take (-x, -y, z, w).
+- **Shader globals** are written only by `MatterportSpace.ApplyView` (once per frame, in `LateUpdate`, from the
+  navigator's `ViewBinding`). Every shader declares them in `MatterportCommon.hlsl`. Change both together.
+- **Settings** are a `ViewerSettings` field on `MatterportSpace` (inspector), read live by the Core objects. In Play
+  mode `OnValidate` copies inspector edits into the instance the Core holds, in case Unity replaced it.
 - **Domain reload is off** (fast Enter Play Mode, set by the project setup), so statics survive between Play sessions.
-  - Deliberate: `MatterportSpace` reuses the last decoded geometry (`LoadGeometry` cache key: mesh timestamp +
-    calibration).
+  - Deliberate: `SpaceModel.Load` keeps the last model (cache key: mesh timestamp + sweep count + calibration), so
+    reopening a space, or the Edit-mode preview followed by Play, skips decoding.
   - Anything else static must be reset with `[RuntimeInitializeOnLoadMethod(SubsystemRegistration)]` (see
     `NavInput`).
-- **Measurement** behaviour (clicks, Escape, snapping, axes, units, what shows in which view) lives only in Core
-  `MeasureTool`; the engine files just feed it the pointer ray and draw its `MeasureDrawList`. Change behaviour there,
-  with a test in `Tests/Core/MeasurementTests.cs`.
+- **Measurement** behaviour (clicks, Escape, snapping, axes, units, what shows in which view, colours and line
+  widths) lives only in Core `MeasureTool`; the engine files feed it the pointer ray and draw the screen-space
+  `MeasureOverlay` items (line, dot, ring, label). While measuring, `Navigator.Measuring` hides markers and leaves
+  clicks to the tool (`Navigator.Clicked`); Unity's `MatterportMeasure` runs after the navigator (execution order).
 - **Unity UI blocking:** IMGUI registers its rectangles with `MpGui.Block` while drawing. The next frame's Updates read
-  `BlockedGuiRects` (navigator and measure tool), and the navigator clears the list in `LateUpdate`. Escape belongs to
-  measure mode while it is open (`MatterportMeasure.OwnsEscape`), then to the launcher. In Godot, measure mode marks
-  Escape as handled.
+  `BlockedGuiRects` (`MatterportNavigator.PointerOverView`), and the navigator clears the list in `LateUpdate`. Escape
+  belongs to measure mode while it is open (`MatterportMeasure.OwnsEscape`), then to the launcher. In Godot, measure
+  mode marks Escape as handled.
 - **Web specifics:**
   - **Frame:** three.js is right-handed with Y up like Godot, so web = Core with Z mirrored (`Core.js coreOf/fromCore`).
   - **Image rows:** photos are decoded with `imageOrientation: 'flipY'`, so V is bottom-up as in Core.
@@ -147,6 +158,8 @@ The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceD
   - **Server-built data:** WebAssembly runs the Core interpreted, about 25× slower than native (the BVH took 4.9 s vs
     0.17 s). So the server builds the BVH and snapping features natively (`Bvh.SerializeHierarchy`,
     `MeshFeatures.Serialize`), and the page only loads them.
+  - **One call per frame:** the page sends input to `Bridge.Frame` and decodes a flat double array (layout in the
+    Bridge comment); the scheduler's load/depth/unload requests come back in it as commands. Keep JS↔WASM calls few.
   - **JSExport** methods are called from JS only; `find_unused.py` reads `web/client/js` too.
   - **Shaders:** GLSL 3 shaders declare `out vec4 mpColor` (three r169 doesn't define `gl_FragColor` for GLSL3).
   - **SDK versions:** the user builds with .NET 10, while this container's default is .NET 8. The server's build

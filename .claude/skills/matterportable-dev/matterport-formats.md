@@ -13,8 +13,8 @@ guards against. Update this file whenever real data teaches you something.
   `{"operationName","query","variables"}`.
 - **No login:** public spaces need none. Asset URLs are signed CDN links (`…?t=<token>`) that expire, so the
   downloader re-queries and retries on HTTP 401/403.
-- **Fallback:** when the user's network is challenged, use `Tools~/browser-export.js`, run in the browser
-  console on the viewer page.
+- **If the data API is ever challenged** from the user's network, there is no workaround in the code (the old
+  browser-console exporter was removed as unused in commit 215b477; restore it from there if ever needed).
 
 ## GraphQL schema
 
