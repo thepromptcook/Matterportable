@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Matterportable.Core;
 using NUnit.Framework;
 
@@ -183,6 +184,63 @@ namespace Matterportable.Tests
             Assert.IsTrue(back.FlipTextureV);
             Assert.AreEqual(cal.Faces[0], back.Faces[0]);
             Assert.AreEqual(0.8, back.Score, 1e-9);
+        }
+    }
+
+    /// <summary>Matterport's 3D-tile mesh: Draco decoding and GLB tiles into the Core frame.</summary>
+    public class MeshTileTests
+    {
+        [Test]
+        public void DecodesDracoMeshesFromGooglesEncoder()
+        {
+            var data = Convert.FromBase64String(TestSpaces.DracoGrid);
+            var mesh = Draco.Decode(data, 0, data.Length);
+            Assert.AreEqual(256, mesh.PointCount);
+            Assert.AreEqual(450 * 3, mesh.Indices.Length);
+            var (pos, pc) = mesh.Attributes[0];
+            var (uv, uc) = mesh.Attributes[1];
+            Assert.AreEqual(3, pc);
+            Assert.AreEqual(2, uc);
+            for (int j = 0, t = 0; j < 16; j++)
+            for (int i = 0; i < 16; i++)
+            {
+                int k = j * 16 + i;
+                var p = TestSpaces.DracoGridPoint(i, j);
+                Assert.AreEqual(p.X, pos[3 * k], 1e-4f);
+                Assert.AreEqual(p.Y, pos[3 * k + 1], 1e-4f, "16-bit quantization over 3.75 m");
+                Assert.AreEqual(p.Z, pos[3 * k + 2], 1e-4f);
+                Assert.AreEqual(i / 15f, uv[2 * k], 3e-4f);
+                Assert.AreEqual(j / 15f, uv[2 * k + 1], 3e-4f);
+                if (i == 15 || j == 15) continue;
+                CollectionAssert.AreEqual(new[] { k, k + 1, k + 16, k + 1, k + 17, k + 16 }, new ArraySegment<int>(mesh.Indices, t, 6), "faces in order");
+                t += 6;
+            }
+        }
+
+        [Test]
+        public void ReadsTilesIntoTheCoreFrame()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "mpt-tiles-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var glb = TestSpaces.TileGlb("lod3_tex_000.ktx2");
+                Directory.CreateDirectory(Path.Combine(dir, "tiles", "3"));
+                File.WriteAllBytes(Path.Combine(dir, "tiles", "3", "lod3_000.glb"), glb);
+                CollectionAssert.AreEqual(new[] { "3/lod3_000.glb" }, MeshTiles.Leaves(JsonValue.Parse(TestSpaces.Tileset("3/lod3_000.glb"))), "only the finest level");
+                CollectionAssert.AreEqual(new[] { "lod3_tex_000.jpg" }, MeshTiles.Textures(glb));
+
+                var geo = MeshTiles.LoadGeometry(dir, new[] { "tiles/3/lod3_000.glb" });
+                Assert.AreEqual(256, geo.Positions.Length);
+                Assert.AreEqual("tiles/3/lod3_tex_000.jpg", geo.Parts[0].Material);
+                int k = 5 * 16 + 3;
+                var p = TestSpaces.DracoGridPoint(3, 5);
+                Assert.Less((geo.Positions[k] - new Vec3(p.X, p.Y, -p.Z)).Length, 2e-4f, "glTF is the Core frame with Z mirrored");
+                Assert.AreEqual(1f - 5f / 15f, geo.Uvs[k].Y, 3e-4f, "texture rows bottom-up");
+                CollectionAssert.AreEqual(new[] { 0, 16, 1 }, new ArraySegment<int>(geo.Parts[0].Indices, 0, 3), "mirroring flips the winding back");
+                Assert.IsTrue(geo.Bvh.Raycast(new Vec3(1, 2, -1), new Vec3(0, -1, 0), 5f, out var hit));
+                Assert.Less(hit.Normal.Y, 0f, "the grid faces down, as in glTF ((+x) × (+z) with counter-clockwise front faces)");
+            }
+            finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
         }
     }
 

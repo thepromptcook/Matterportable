@@ -91,6 +91,8 @@ namespace Matterportable.Core
         public List<SweepEntry> Sweeps = new List<SweepEntry>();
         public List<string> Warnings = new List<string>();
         public List<string> TilesetUrls = new List<string>();
+        /// <summary>Downloaded mesh tiles (GLB paths in the space folder), finest level; empty when there are none.</summary>
+        public List<string> Tiles = new List<string>();
 
         public int FindFloor(string id)
         {
@@ -145,6 +147,7 @@ namespace Matterportable.Core
             j.Set("sweeps", sweeps);
             j.Set("warnings", JsonValue.FromArray(Warnings));
             if (TilesetUrls.Count > 0) j.Set("tilesets", JsonValue.FromArray(TilesetUrls));
+            if (Tiles.Count > 0) j.Set("tiles", JsonValue.FromArray(Tiles));
             return j;
         }
 
@@ -166,6 +169,7 @@ namespace Matterportable.Core
                 Frame = Frames.FromToken(j["frame"].AsString()),
                 Warnings = j["warnings"].AsStringList(),
                 TilesetUrls = j["tilesets"].AsStringList(),
+                Tiles = j["tiles"].AsStringList(),
             };
             var mesh = j["mesh"];
             if (mesh.IsObject && !string.IsNullOrEmpty(mesh["file"].AsString()))
@@ -226,6 +230,8 @@ namespace Matterportable.Core
         public const string MeshDir = "mesh";
         public const string TexturesDir = "textures";
         public const string PanosDir = "panos";
+        /// <summary>The finest level of Matterport's 3D-tile mesh (<see cref="MeshTiles"/>).</summary>
+        public const string TilesDir = "tiles";
         public const string DebugDir = "debug";
 
         public static string SpaceDir(string cacheRoot, string modelId) => Path.Combine(cacheRoot, SafeName(modelId));

@@ -55,9 +55,10 @@ namespace Matterportable.Tests
             var client = new MatterportGraphClient(fake, NullLog.Instance);
             var outcome = client.FetchModelAsync("DemoSpace01", CancellationToken.None).GetAwaiter().GetResult();
             Assert.IsTrue(outcome.Data["model"]["locations"].Count > 0);
-            CollectionAssert.Contains(outcome.PrunedFields, "model/assets/tilesets");
+            CollectionAssert.Contains(outcome.PrunedFields, "model/assets/textures/status");
             CollectionAssert.Contains(outcome.PrunedFields, "model/locations/position");
             CollectionAssert.DoesNotContain(outcome.PrunedFields, "model/locations/pano/skyboxes/urlTemplate");
+            CollectionAssert.DoesNotContain(outcome.PrunedFields, "model/assets/tilesets/urlTemplate");
             Assert.LessOrEqual(outcome.Attempts, 4, "errors for all fields of one round should be pruned together");
         }
 
@@ -114,6 +115,9 @@ namespace Matterportable.Tests
 
             var mesh = DamDecoder.Decode(File.ReadAllBytes(CacheLayout.Resolve(_dir, reloaded.Mesh.File)));
             Assert.AreEqual(space.SourceMesh.TriangleCount, mesh.TriangleCount);
+            CollectionAssert.AreEqual(new[] { "tiles/3/lod3_000.glb" }, reloaded.Tiles, "the finest level of the tile mesh");
+            Assert.IsTrue(File.Exists(CacheLayout.Resolve(_dir, "tiles/3/lod3_tex_000.jpg")), "with the JPEG of its texture");
+            Assert.AreEqual(256, MeshTiles.LoadGeometry(_dir, reloaded.Tiles).Positions.Length);
 
             // Second run is a no-op (everything cached).
             int gets = fake.Gets;

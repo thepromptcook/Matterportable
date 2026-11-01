@@ -16,6 +16,8 @@ namespace Matterportable.Core
         public int MaxConcurrency = 6;
         public int MaxRetries = 4;
         public bool Panoramas = true;
+        /// <summary>Also fetch the finest level of Matterport's 3D-tile mesh (finer than the 50k mesh, 4096 px textures).</summary>
+        public bool Tiles = true;
         /// <summary>Only download the first N sweeps (0 = all). Handy for a quick first look at a huge space.</summary>
         public int MaxSweeps;
         public bool Overwrite;
@@ -84,6 +86,47 @@ namespace Matterportable.Core
             return RunAsync(modelId, Fetch, spaceDir, options ?? new DownloadOptions(), ct);
         }
 
+        /// <summary>
+        /// The finest level of Matterport's 3D-tile mesh, ~2.4× the triangles of the 50k mesh with 4096 px textures
+        /// (tiles/: the tileset, its leaf GLBs and a JPEG per texture; read with <see cref="MeshTiles"/>). Optional: older
+        /// spaces have none, and failures are only logged.
+        /// </summary>
+        async Task DownloadTilesAsync(string template, string spaceDir, SpaceManifest manifest, DownloadOptions o, CancellationToken ct)
+        {
+            Status.SetStage("Downloading mesh tiles");
+            Item Fetch(string rel)
+            {
+                var item = new Item { Key = CacheLayout.TilesDir + "/" + rel, RelPath = CacheLayout.TilesDir + "/" + rel };
+                item.Urls.Add(template.Replace("<file>", rel));
+                return item;
+            }
+            async Task<bool> Run(List<Item> items)
+            {
+                Status.AddTotal(items.Count);
+                await RunItemsAsync(items, spaceDir, o, ct).ConfigureAwait(false);
+                return items.TrueForAll(i => i.Ok);
+            }
+            var tileset = Fetch("tileset.json");
+            if (!await Run(new List<Item> { tileset }).ConfigureAwait(false))
+            {
+                _log.Info($"Mesh tiles unavailable ({Describe(tileset)}).");
+                return;
+            }
+            var leaves = MeshTiles.Leaves(JsonValue.Parse(File.ReadAllText(CacheLayout.Resolve(spaceDir, tileset.RelPath))));
+            var glbs = leaves.ConvertAll(Fetch);
+            bool ok = await Run(glbs).ConfigureAwait(false);
+            var images = new List<Item>();
+            for (int i = 0; i < glbs.Count; i++)
+            {
+                if (!glbs[i].Ok) continue;
+                string folder = leaves[i].Substring(0, leaves[i].LastIndexOf('/') + 1); // textures sit next to their tile
+                foreach (var image in MeshTiles.Textures(File.ReadAllBytes(CacheLayout.Resolve(spaceDir, glbs[i].RelPath)))) images.Add(Fetch(folder + image));
+            }
+            ok &= await Run(images).ConfigureAwait(false);
+            if (ok) manifest.Tiles = glbs.ConvertAll(g => g.RelPath);
+            else _log.Info("Some mesh tiles failed to download; the space has the standard mesh only.");
+        }
+
         sealed class Item
         {
             public string Key, RelPath;
@@ -149,9 +192,12 @@ namespace Matterportable.Core
             else
             {
                 Warn(manifest, remote.TilesetUrls.Count > 0
-                    ? "This space only offers streamed mesh tiles, which are not supported yet. It will be panorama-only."
+                    ? "This space only offers Matterport's 3D-tile mesh, which the viewers don't show yet (it is saved in tiles/). It will be panorama-only."
                     : "No mesh is available for this space. It will be panorama-only.");
             }
+
+            // Matterport's finer 3D-tile mesh, while the signed links are fresh (they last minutes).
+            if (o.Tiles && remote.TileTemplate != null) await DownloadTilesAsync(remote.TileTemplate, spaceDir, manifest, o, ct).ConfigureAwait(false);
 
             // 2) Textures and panoramas.
             var texSet = remote.ChooseTextures(mesh, o.TextureQuality);
@@ -249,7 +295,7 @@ namespace Matterportable.Core
             manifest.Save(spaceDir);
             Status.SetStage("Done");
             Status.SetCurrent("");
-            _log.Info($"Saved {manifest.Sweeps.Count} sweeps, {manifest.Textures.Count} textures, mesh: {(manifest.Mesh != null ? "yes" : "no")} " +
+            _log.Info($"Saved {manifest.Sweeps.Count} sweeps, {manifest.Textures.Count} textures, mesh: {(manifest.Mesh != null ? "yes" : "no")}, mesh tiles: {manifest.Tiles.Count} " +
                       $"→ {spaceDir} ({IoUtil.FormatBytes(IoUtil.DirectorySize(spaceDir))}).");
             return manifest;
         }

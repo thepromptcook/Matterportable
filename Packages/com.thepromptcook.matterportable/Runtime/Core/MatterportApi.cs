@@ -87,6 +87,8 @@ namespace Matterportable.Core
         public List<RemoteMesh> Meshes = new List<RemoteMesh>();
         public List<RemoteTextureSet> TextureSets = new List<RemoteTextureSet>();
         public List<string> TilesetUrls = new List<string>();
+        /// <summary>URL of any tileset file, with &lt;file&gt; for its relative path (signed, short-lived).</summary>
+        public string TileTemplate;
         public List<FloorEntry> Floors = new List<FloorEntry>();
         public List<RemoteSweep> Sweeps = new List<RemoteSweep>();
         public int SkippedSweeps;
@@ -179,6 +181,8 @@ namespace Matterportable.Core
             {
                 var u = ts["url"].AsString() ?? ts["urlTemplate"].AsString();
                 if (!string.IsNullOrEmpty(u)) model.TilesetUrls.Add(u);
+                var template = ts["urlTemplate"].AsString();
+                if (model.TileTemplate == null && template != null && template.Contains("<file>")) model.TileTemplate = template;
             }
 
             int floorOrdinal = 0;

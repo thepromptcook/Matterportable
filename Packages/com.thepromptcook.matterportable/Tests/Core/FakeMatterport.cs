@@ -37,6 +37,9 @@ namespace Matterportable.Tests
                 "model/assets/meshes/filename", "model/assets/meshes/format", "model/assets/meshes/resolution", "model/assets/meshes/url",
                 "model/assets/textures", "model/assets/textures/id", "model/assets/textures/format", "model/assets/textures/resolution",
                 "model/assets/textures/quality", "model/assets/textures/urlTemplate",
+                "model/assets/tilesets", "model/assets/tilesets/status", "model/assets/tilesets/url", "model/assets/tilesets/urlTemplate",
+                "model/assets/tilesets/validUntil", "model/assets/tilesets/tilesetVersion", "model/assets/tilesets/tilesetDepth",
+                "model/assets/tilesets/tilesetPreset",
                 "model/floors", "model/floors/id", "model/floors/label", "model/floors/sequence",
                 "model/locations", "model/locations/id", "model/locations/index", "model/locations/label", "model/locations/neighbors",
                 "model/locations/floor", "model/locations/floor/id", "model/locations/room", "model/locations/room/id",
@@ -50,6 +53,9 @@ namespace Matterportable.Tests
 
             var id = space.Manifest.ModelId;
             Files[Cdn + id + "/assets/" + id + "_50k.dam"] = DamWriter.Write(space.SourceMesh);
+            Files[Cdn + id + "/assets/tiles/tileset.json"] = Encoding.UTF8.GetBytes(TestSpaces.Tileset("3/lod3_000.glb"));
+            Files[Cdn + id + "/assets/tiles/3/lod3_000.glb"] = TestSpaces.TileGlb("lod3_tex_000.ktx2");
+            Files[Cdn + id + "/assets/tiles/3/lod3_tex_000.jpg"] = Encoding.UTF8.GetBytes("a JPEG");
             foreach (var t in space.Manifest.Textures)
                 Files[Cdn + id + "/assets/" + id + "_50k_texture_png_high/" + t.Material + ".png"] = Png.Encode(space.Textures[t.Material]);
             for (int i = 0; i < space.Manifest.Sweeps.Count; i++)
@@ -76,7 +82,9 @@ namespace Matterportable.Tests
                     .Set("urlTemplate", Signed(id + "_50k_texture_png_low/" + id + "_50k_<texture>.png")))
                 .Add(JsonValue.NewObject().Set("id", "tex-high").Set("format", "png").Set("resolution", "50k").Set("quality", "high")
                     .Set("urlTemplate", Signed(id + "_50k_texture_png_high/" + id + "_50k_<texture>.png")));
-            model.Set("assets", JsonValue.NewObject().Set("meshes", meshes).Set("textures", textures));
+            var tilesets = JsonValue.NewArray().Add(JsonValue.NewObject().Set("status", "available").Set("tilesetDepth", 3)
+                .Set("urlTemplate", Signed("tiles/<file>")));
+            model.Set("assets", JsonValue.NewObject().Set("meshes", meshes).Set("textures", textures).Set("tilesets", tilesets));
             var floors = JsonValue.NewArray();
             foreach (var f in m.Floors) floors.Add(JsonValue.NewObject().Set("id", f.Id).Set("label", f.Label).Set("sequence", f.Index));
             model.Set("floors", floors);
