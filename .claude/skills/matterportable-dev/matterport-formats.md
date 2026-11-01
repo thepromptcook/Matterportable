@@ -79,6 +79,16 @@ The server is graphql-java style. Validation errors carry a line/column location
   50k mesh (see the dev skill's fidelity check): the photos dominate, and the mesh texture only shows in the few
   percent the photos don't cover. Kept for reconstruction (finer object outlines), not shown.
 
+## Scans as geometry for furniture (confirmed on rGMMnZDh3Tf)
+
+- **The 50k mesh is one continuous, noisy surface:** 29k welded vertices, 3,700 boundary and 74 non-manifold edges.
+  Furniture joins the floor and the walls; walls aren't planar enough for region growing (22,000 regions at 12°/4 cm).
+- **Ceilings:** about 2.5 m above each floor; doorways have soffits at ~2.03 m, which a per-column ceiling would
+  mistake for the ceiling (use the highest ceiling nearby).
+- **What height columns find:** 47 pieces and 3 open doors in the house; beds with nightstands and sectional sofas
+  merge into patches too big to carry. Furniture usually has floor under it in the scan (chair legs), and the baked
+  texture behind furniture holds smears of it.
+
 ## Panoramas
 
 - **Faces:** six faces per sweep from the `urlTemplate` with `<face>` = 0..5. Sizes: 512 (preview and solver
@@ -96,6 +106,8 @@ The server is graphql-java style. Validation errors carry a line/column location
 - `textures/*.jpg`
 - `tiles/` (when the space has a tileset): `tileset.json`, `3/lod3_*.glb` and their 4096 px JPEGs; listed in the
   manifest's `tiles`
+- `objects.json`: the movable props (version, mesh key, per prop: kind, pivot, triangle runs); edit by hand or delete
+  to find them again
 - `panos/<sweep>/<size>/face0..5.jpg`
 - `debug/`, holding `graph-query.graphql`, `graph-response.json`, `graph-pruned-fields.txt`, `load.log`,
   `dam-structure.txt` and `diagnostics.txt`

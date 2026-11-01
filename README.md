@@ -119,7 +119,8 @@ https://github.com/thepromptcook/Matterportable.git?path=/Packages/com.theprompt
 | A · D | Step sideways |
 | Shift | Run |
 | ← → · Q E · Left-drag | Turn and look around |
-| Mouse wheel | Zoom (field of view) |
+| F or click | Pick up the furniture under the pointer · put it down · open or close a door |
+| Mouse wheel | Zoom (field of view) · turn what you carry |
 | 1 · 2 · 3 | Back to Inside (moves to the nearest sweep) · Dollhouse · Floor plan |
 
 You walk at the height the photos were taken from, and the scanned mesh is solid:
@@ -130,6 +131,13 @@ You walk at the height the photos were taken from, and the scanned mesh is solid
 - **The view:** it blends the photos of the two nearest sweeps in sight, so it is exact at a sweep and a good
   approximation in between.
 - **Walking needs a floor:** it isn't available at unplaced 360° photos, which have none.
+- **Moving things:** chairs, tables, dressers and other furniture standing on their own, and doors standing open,
+  can be moved. The one under the pointer lightens and the hint at the bottom says what F does. What you carry
+  stays in front of you, short of walls, and you put it down on whatever is below it (the floor, or a table). It
+  keeps its own photo, and it blocks you where you leave it. The pieces are found automatically the first time a
+  space opens (saved in `objects.json` next to it); F2 → *Props* colours every piece that can move. Where something
+  stood, the room shows what the scan has there, which is often a smear of the object, because no photo saw behind
+  it.
 
 **Measure mode** works like Matterport's: click to place points. With *Continuous lines* on (the default), each click
 adds a connected segment; **Esc** or **✓ Confirm** ends the line, and Esc again leaves measure mode. Points snap to
@@ -283,6 +291,9 @@ dotnet run --project tools/Matterportable.Cli -- diagnose MatterportCache/rGMMnZ
 
 ## Limitations
 
+- **Moving things** relies on finding each piece in the scan: furniture pushed together (a bed between nightstands,
+  a sectional sofa) is one piece and too big to carry, so it stays put; built-in things that stand on the floor
+  (a counter shorter than 3 m) may come loose. Closed doors are part of the wall.
 - **Walk mode** sees and collides with the scanned mesh only:
   - Thin things the scan missed, such as railings, lamp poles and chair legs, don't block you, and look a little
     ghosted between sweeps (the photos are projected onto whatever surface is behind them).

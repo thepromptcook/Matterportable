@@ -33,6 +33,9 @@ python3 tools/compare_alignment.py /tmp/cmp/<id>
 # rendering fidelity: Walk mode at sweeps without their own photo vs the photo (SSIM/PSNR; dev skill explains)
 xvfb-run -a -s "-screen 0 960x540x24" /opt/godot/godot --path godot --resolution 960x540 --rendering-method gl_compatibility -- --open <id> --compare-sweeps 8 --fidelity /tmp/fid/a
 python3 tools/compare_fidelity.py /tmp/fid/a /tmp/fid/b
+# moving a prop on a real space (Walk mode: F on the middle of the view, turn, F): Godot, then the web page
+xvfb-run -a -s "-screen 0 1280x720x24" /opt/godot/godot --path godot --resolution 1280x720 --rendering-method gl_compatibility -- --open rGMMnZDh3Tf --mode walk --sweep 35 --yaw 46 --pitch 35 --move-prop -50 --screenshot /tmp/props/after.png
+#   web: ?open=rGMMnZDh3Tf&mode=walk&sweep=35&yaw=46&pitch=35&move=-50 (view=5: every prop coloured)
 dotnet test tools/Matterportable.Core.Tests --filter Alignment
 dotnet run --project tools/Matterportable.Cli -- help   # download / demo / info / diagnose
 ```
@@ -51,7 +54,9 @@ Packages/com.thepromptcook.matterportable/
                        ViewerText (key hint, F1 stats, floor labels)
     Navigator.cs       Matterport navigation: input → camera pose, ViewBinding (what the shaders show), markers;
                        Walk mode (free W/A/S/D) with panoramas from the two nearest sweeps in sight
-    Walker.cs          the Walk-mode body: the scanned mesh as collider (walls, furniture, stairs, ledges, ceilings)
+    Walker.cs          the Walk-mode body: collides with an ICollider (walls, furniture, stairs, ledges, ceilings)
+    Props.cs           movable furniture and doors: PropFinder (finds them in the scan, objects.json), PropWorld
+                       (Walk mode's world: poses, carrying, door swings, collision with props where they are now)
     PanoramaScheduler.cs   which panoramas to load/show/drop; engines implement IPanoramaLoader
     Measurement.cs     MeasureTool (measure mode, MeasureOverlay screen-space draw items), MeshFeatures (snapping)
   Runtime/Space/       MatterportSpace (component: load lifecycle, shader globals), SpaceMesh (Unity mesh),
@@ -78,12 +83,13 @@ tools/                CLI, test runner project, UnityCompileCheck (+ API stubs),
 
 The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceDownloader` →
 `MatterportCache/<id>/` (`manifest.json`, `mesh/`, `textures/`, `panos/`, `debug/`) → `CalibrationPipeline` →
-`calibration.json` → `MatterportSpace` load → navigator.
+`calibration.json` → `MatterportSpace` load (`SpaceModel.Load`, which also finds the props once: `objects.json`) →
+navigator.
 
 ## Rules
 
 - **Three front ends, one behaviour.** Viewer behaviour lives once in Core: navigation and transitions
-  (`Navigator`), walking and collision (`Walker`), panorama loading/eviction (`PanoramaScheduler`), measuring and its drawing (`MeasureTool`,
+  (`Navigator`), walking and collision (`Walker`), moving furniture and doors (`PropWorld`), panorama loading/eviction (`PanoramaScheduler`), measuring and its drawing (`MeasureTool`,
   `MeasureOverlay`), settings (`ViewerSettings`) and on-screen text (`ViewerText`). Change it there, with a test in
   `Tests/Core` (`ViewerTests`, `MeasurementTests`). Engine files are thin adapters, mirrored file by file with the
   same names: they turn input into Core calls, load textures when the scheduler asks, and draw what the Core
@@ -171,6 +177,23 @@ The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceD
   that compiles `Runtime/Core`: walking between neighbouring sweeps arrived on 765 of 768 clear paths, and every
   staircase was climbed. The checks script walking with `--mode walk --yaw D --walk S` (Godot) and
   `?mode=walk&yaw=D&walk=S` (web).
+- **Props** (Walk mode's movable furniture and doors):
+  - **Found** once per space by `PropFinder` in a 2.5D grid per floor (5 cm columns, 10 cm height bins): columns
+    covered to near the ceiling are wall, columns whose lowest surface is above 1.2 m are hanging, the rest stand on
+    the floor; each connected patch of standing columns is a candidate, sized like one piece of furniture. Thin,
+    door-sized slabs with a wall at one end are doors (pivot = hinge foot). Saved in `objects.json` with a version
+    and the mesh's key (a new frame finds them again); the web server ships them in `space.json`.
+  - **Drawn** as one mesh per prop (`SpaceModel.MeshPieces`: piece 0 the room, i + 1 prop i) with its pose from
+    `PropWorld.Poses` (world = rotation × scanned + translation), sharing the room's materials. The mesh shaders
+    project photos from where a vertex was scanned (the space matrix: `_MP_SpaceToWorld`, `space_matrix`,
+    `spaceMatrix`), not from where it is drawn, so a moved prop keeps its pixels. The tint (`PropWorld.Tint`:
+    highlight, F2 "Props" view) is per object: MaterialPropertyBlock (Unity), `instance uniform` (Godot), a material
+    per prop sharing the uniform objects (web; a `THREE.Vector4`'s w defaults to 1, so zero it).
+  - **Used** with F (`NavKeys.Use`; Q/E already turn) or a click in Walk mode, on the prop under the pointer
+    (`Navigator.HighlightProp`); the wheel turns what is carried. A drop that would land inside the body is
+    refused (`DropRefused`, the hint says so). Collision: `PropWorld` is the Walker's `ICollider`, the room's BVH
+    with prop triangles skipped (a mask, no second BVH) plus each prop's own BVH through its pose. Depth cubes and
+    Inside-mode picking keep the scan as photographed. Once anything moved, the depth test stays on even at a sweep.
 - **Measurement** behaviour (clicks, Escape, snapping, axes, units, what shows in which view, colours and line
   widths) lives only in Core `MeasureTool`; the engine files feed it the pointer ray and draw the screen-space
   `MeasureOverlay` items (line, dot, ring, label). While measuring, `Navigator.Measuring` hides markers and leaves

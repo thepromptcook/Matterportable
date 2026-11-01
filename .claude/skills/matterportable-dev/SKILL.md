@@ -32,7 +32,7 @@ tools/web-check.sh                   # demo house in headless Chromium: inside (
 tools/web-check.sh --compare rGMMnZDh3Tf 6 && python3 tools/compare_alignment.py /tmp/matterportable-web
 ```
 
-The page also reads URL parameters, the same as Godot's command line: `?open=<link|demo>&sweep=N&mode=…&yaw=D&view=N&goto=N&walk=S&measure=1`.
+The page also reads URL parameters, the same as Godot's command line: `?open=<link|demo>&sweep=N&mode=…&yaw=D&pitch=D&view=N&goto=N&walk=S&measure=1&move=D`.
 `window.mp.checks` reports the result. A check that hangs: `window.mp.settleState()` shows what the page is still
 waiting for. Headless rendering is all on the CPU, so the check runs Chromium on Mesa under xvfb with `aa=0&aniso=1`
 (multisampling and anisotropic filtering off). Those cut a 131 s check to 24 s; real browsers keep both on.
@@ -50,7 +50,9 @@ tools/godot-check.sh --sweep 5 --view 2   # another sweep; F2 render view 2 = pa
 The Godot launcher also takes these arguments after `--`: `--open <link|demo>`, `--sweep N`,
 `--mode inside|dollhouse|floorplan|walk`, `--yaw D`, `--walk S` (holds W for S seconds; the log line gives the camera
 position), `--view N`, `--views 0,2,3` (with `--screenshot f.png`: one file per render view, `f_v0.png` …, from the
-same spot), `--depth N` (depth cube size), `--fidelity dir` (below), `--measure` (places a two-segment line with real clicks, sends a
+same spot), `--depth N` (depth cube size), `--fidelity dir` (below), `--pitch D` (with `--yaw`), `--move-prop D` (Walk mode:
+F on what the middle of the view is on, turn D degrees, F again, turn back half way; the log gives where the prop went
+or why not), `--measure` (places a two-segment line with real clicks, sends a
 real Escape, starts another line; the log then says "1 measurement(s), drawing yes, menu closed"), `--goto N` (a real transition; the screenshot waits until it
 finishes), `--screenshot file.png` (it quits after saving). Use them to
 reproduce a bug in a single run. The demo's panoramas are rendered from the synthetic house, so at a sweep the
@@ -124,6 +126,10 @@ tools/check.sh
 | Wrong panorama shown, bad blend, floors not clipped, culling | `Navigator.PushView` → `ViewBinding` → `MatterportSpace.ApplyView` (Unity, Godot) / `MatterportSpace.update` (web) |
 | Walk mode: walks through something, gets stuck, can't climb stairs, jittery steps | Core `Walker.cs` (body spheres, foot rays, step/fall, no-floor refusal; settings `BodyRadius`, `StepHeight`, `WalkSpeed`) + `WalkingTests`; `Navigator.UpdateWalk` / `StartWalk` (`Standing`) |
 | Walk mode: view at a sweep doesn't match the photo, eyes too low/high | `Walker` constructor: `FloorUnder` (first walkable surface 1-2.5 m below the eye, so table tops are skipped) and the ring search for room to stand; the eye height is the capture camera's height above that floor |
+| Walk mode: a piece of furniture can't be moved, or a wall/railing comes loose | `PropFinder` in `Core/Props.cs` (column classes, patch size limits, triangle assignment: every corner over the patch and below the local top) + `PropTests`; delete `objects.json` to find again; F2 → *Props* shows every piece. Look at the patches top-down first (scratch harness dumping `PropFinder` cells), then in Godot `--mode dollhouse --view 5` |
+| Walk mode: carrying, dropping, turning, doors | `PropWorld` (Carry/Update/Drop/ToggleDoor, `DropRefused`) + `Navigator.UpdateHands` (F or click on `HighlightProp`, wheel turns) + `ViewerText.PropHint`; `PropTests`, `ViewerTests.WalkModePicksUpFurniture…` |
+| Moved prop drawn in the wrong place, room black, prop without its photo | engine adapters: Unity `SpaceMesh.ApplyProps`, Godot `MatterportSpace.ApplyView` (prop `Transform`), web `MatterportSpace.update` (Core → three: mirror Z, quaternion (-x, -y, z, w)); the shaders' space matrix (projection from scanned positions) and tint (zero alpha when not set) |
+| A smear where a moved prop stood | expected: no photo saw behind it. The depth test's bias (~12 cm) lets some of its pixels through near walls, and the baked texture there holds the prop |
 | Walk mode: popping or wrong photos between sweeps | `Navigator.UpdateWalkPanoramas` (two nearest sweeps in sight, weights 1/d − 1/d₃, sticky slots). Ghosting of thin unscanned things is inherent to projecting photos |
 | Markers, cursor | what and where: `Navigator.BuildMarkers`; drawing: `SweepMarkers` + marker shader |
 | F1 stats, key hint, floor button labels | `ViewerText` in `Core/Viewer.cs` |

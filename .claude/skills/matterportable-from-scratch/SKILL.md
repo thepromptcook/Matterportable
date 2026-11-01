@@ -75,7 +75,8 @@ Core viewer (what all three front ends run; tested without any engine)
   Navigator: NavigatorInput (pointer px, buttons, keys, pointer ray) → camera pose + fov, ViewBinding, markers
   PanoramaScheduler: tiers, priorities, LRU budget, pinned on-screen sweeps → IPanoramaLoader (engine) callbacks
   MeasureTool: state machine + snapping → MeasureOverlay (screen-space lines, dots, rings, labels)
-  Walker: Walk mode's body against the BVH (the scanned mesh is the collider: walls, furniture, stairs, ledges)
+  Walker: Walk mode's body against an ICollider (the scanned mesh is the collider: walls, furniture, stairs, ledges)
+  PropFinder (objects.json) → PropWorld: movable furniture and doors (poses, carrying, door swings, collision)
 Unity runtime (thin adapters)
   MatterportSpace (load coroutine, shader globals from the binding) ─ SpaceMesh ─ PanoramaCache (loader)
     ─ GpuTextures (async decode → GPU blit + mips)
@@ -190,6 +191,20 @@ Web: server (ASP.NET Core, the Core natively: download, bundle, BVH + features) 
     camera (a ray straight down often lands on a table top under the tripod), then a ring search for room to stand.
   - **Fidelity:** score Walk mode leave-one-out (at a sweep, render without its photo; SSIM/PSNR against the photo)
     and check the camera really stands at the photo's spot before trusting a score.
+- **Movable props** (Walk mode):
+  - **Finding them:** a 2.5D grid per floor, 5 cm columns with a 64-bit mask of 10 cm height bins (surfaces sampled
+    at half a cell; floor and ceiling faces kept out). A column is *wall* when its surfaces reach within 0.3 m of the
+    highest ceiling within half a metre (so a soffit over a doorway doesn't count) and fill 60 % of their span;
+    *hanging* when its lowest surface is above 1.2 m; else *standing*, up to the top of its lowest run of bins (a
+    lamp over a table stays). 8-connected standing patches are candidates. A triangle joins a patch when its centre
+    is over it and every corner is over it or a neighbouring cell and below the local top + 15 cm. Keep pieces no
+    longer than 3 m, no larger than 4.5 m², no taller than 2 m and filling 35 % of their oriented outline. Doors:
+    0.55-1.3 m long, at most 0.2 m thick, 1.75-2.45 m tall, with wall cells at exactly one end (the hinge). The
+    user's house: 47 props, 3 doors, 1 s.
+  - **Drawing them:** a mesh per prop with its pose; the shader projects photos from the scanned position (the
+    space matrix), so the prop carries its own pixels wherever it goes.
+  - **Colliding:** the room's BVH with a skip mask over prop triangles, plus a small BVH per prop queried through
+    the inverse pose. No second room BVH (WebAssembly would take seconds to build it).
 - **Transitions:** move the camera linearly with an ease curve, cross-fade with smoothstep(0.1–0.9), and preload
   the target panorama (small tier first). Mode changes fly between poses, fading projection out early when
   leaving a sweep and in late when arriving.
@@ -282,6 +297,15 @@ Web: server (ASP.NET Core, the Core natively: download, bundle, BVH + features) 
   attributes, difference prediction with the wrap transform, rANS tagged and raw symbols. rANS precision is
   clamp(⌊3·bits/2⌋, 12, 20) bits and the state base is 4× the precision. Validate against Google's draco3d (npm)
   value by value; a test fixture is easy to make with draco3d's encoder from a procedural grid.
+- **Finding furniture in a decimated scan:** planar region growing (12°, 4 cm) splits the 50k mesh into 22,000
+  regions and finds almost no walls, so whole rooms come out as one object. Height columns are robust to the noise.
+  A triangle assigned by its centre alone drags in pieces of wall (long triangles): check every corner.
+- **Props, engine side:** a `THREE.Vector4()` is (0, 0, 0, 1), so an "unset" tint turned the whole room black;
+  Unity's unset global matrix is all zeros (the shader falls back to the object matrix while `_m33` is 0); Q/E
+  already turn, so interaction is F. A scripted check must wait until the camera has its view: the first frame's
+  pointer ray still has the old rotation.
+- **Dropping onto the player:** the body's sphere test pushes it up onto the furniture (standing on the table).
+  Test the dropped prop against the body first and refuse.
 - **Signed tile links expire in ~5 minutes** (HTTP 410): download tiles right after the GraphQL query, before the
   panoramas.
 - **Unplaced 360° photos** (no neighbours, no floor below, sometimes positioned at floor level) can't be walked from.
