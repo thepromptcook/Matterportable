@@ -12,8 +12,10 @@ namespace Matterportable
     {
         public MatterportSpace Space;
         public ViewMode StartMode = ViewMode.Inside;
-        /// <summary>Keys held by a script (automated checks), as if pressed.</summary>
-        public NavKeys ScriptedHeld;
+        /// <summary>Keys held, or pressed once, by a script (automated checks).</summary>
+        public NavKeys ScriptedHeld, ScriptedPressed;
+        /// <summary>Aim through the middle of the view instead of the mouse (scripted checks).</summary>
+        public bool CentrePointer;
         public Navigator Core { get; private set; }
 
         SweepMarkers _markers;
@@ -46,7 +48,7 @@ namespace Matterportable
             Key.Key1 => NavKeys.Inside, Key.Key2 => NavKeys.Dollhouse, Key.Key3 => NavKeys.Floorplan, Key.Key4 => NavKeys.Walk,
             Key.W or Key.Up => NavKeys.Forward, Key.S or Key.Down => NavKeys.Back, Key.A => NavKeys.Left, Key.D => NavKeys.Right,
             Key.Bracketright => NavKeys.Next, Key.Bracketleft => NavKeys.Previous, Key.Home => NavKeys.Home,
-            Key.Pageup => NavKeys.FloorUp, Key.Pagedown => NavKeys.FloorDown, Key.P => NavKeys.Tour, Key.F2 => NavKeys.DebugView,
+            Key.Pageup => NavKeys.FloorUp, Key.Pagedown => NavKeys.FloorDown, Key.P => NavKeys.Tour, Key.F2 => NavKeys.DebugView, Key.F => NavKeys.Use,
             _ => NavKeys.None,
         };
 
@@ -63,8 +65,8 @@ namespace Matterportable
             if (Space?.IsLoaded != true) return;
             Core ??= new Navigator(Space.Model, Space.Settings, Space.Scheduler) { StartSweep = Space.StartSweep, StartMode = StartMode };
             var vp = GetViewport();
-            var mouse = vp.GetMousePosition();
             var rect = vp.GetVisibleRect();
+            var mouse = CentrePointer ? rect.GetCenter() : vp.GetMousePosition();
             Core.Update(new NavigatorInput
             {
                 DeltaTime = (float)delta,
@@ -79,18 +81,20 @@ namespace Matterportable
                 PixelAngle = Mathf.DegToRad(Fov) / Mathf.Max(1f, rect.Size.Y),
                 ViewportHeight = rect.Size.Y,
                 Scroll = _scroll,
-                Pressed = _pressed,
+                Pressed = _pressed | ScriptedPressed,
                 Held = Held((Key.Left, NavKeys.TurnLeft), (Key.Q, NavKeys.TurnLeft), (Key.Right, NavKeys.TurnRight), (Key.E, NavKeys.TurnRight),
                     (Key.W, NavKeys.Forward), (Key.Up, NavKeys.Forward), (Key.S, NavKeys.Back), (Key.Down, NavKeys.Back), (Key.A, NavKeys.Left), (Key.D, NavKeys.Right),
                     (Key.Shift, NavKeys.Run)) | ScriptedHeld,
             });
             _down = _up = 0;
             _scroll = 0;
-            _pressed = NavKeys.None;
+            _pressed = ScriptedPressed = NavKeys.None;
             Position = Core.CameraPosition.ToGodot();
             Quaternion = Core.CameraRotation.ToGodot();
             Fov = Core.Fov;
             Space.View = Core.View;
+            Space.Props = Core.Props;
+            Space.HighlightProp = Core.HighlightProp;
             foreach (var m in Core.Markers) _markers.Draw(m.Position.ToGodot(), m.Normal.ToGodot(), m.Radius, m.Color.ToGodot(), m.Inner, m.Fill);
         }
     }

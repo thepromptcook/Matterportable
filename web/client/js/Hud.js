@@ -1,5 +1,5 @@
-// Mirrors MatterportHud (Unity) / Hud (Godot): view modes, floors, measure, tour, menu, key hint, F1 stats (text from
-// Core ViewerText through the WebAssembly bridge).
+// Mirrors MatterportHud (Unity) / Hud (Godot): view modes, floors, measure, tour, menu, key hint, Walk mode's hint for
+// the prop under the pointer, F1 stats (text from Core ViewerText through the WebAssembly bridge).
 import { ViewMode } from './MatterportNavigator.js';
 
 export class Hud {
@@ -17,7 +17,9 @@ export class Hud {
     this.stats = el('stats panel');
     this.stats.hidden = true;
     this.status = el('status-center panel', 'Loading…');
-    this.root.append(bar, el('hint', space.core.KeyHint()), this.stats, this.status);
+    this.propHint = el('prop-hint');
+    this.root.append(bar, el('hint', space.core.KeyHint()), this.propHint, this.stats, this.status);
+    this.propState = '';
     document.body.appendChild(this.root);
     this.floorCount = -1;
     this.frames = 0;
@@ -46,6 +48,12 @@ export class Hud {
     if (this.floorCount !== f.floorCount) this.buildFloors(f.floorCount);
     this.floors.hidden = f.mode === ViewMode.Inside || f.floorCount < 2;
     [...this.floors.children].forEach((b, i) => b.classList.toggle('on', f.selectedFloor === i - 1));
+    const propState = `${f.mode}|${f.highlightProp}|${f.propFlags}`; // ask the Core for the text only when it can change
+    if (propState !== this.propState) {
+      this.propState = propState;
+      this.propHint.textContent = sp.core.PropHint();
+      this.propHint.hidden = !this.propHint.textContent;
+    }
     if (!this.stats.hidden) this.stats.textContent = sp.core.Stats(this.fps, sp.lastLoadSeconds, sp.texturesLoaded);
   }
 

@@ -37,7 +37,7 @@ namespace Matterportable
             (KeyCode.W, NavKeys.Forward), (KeyCode.UpArrow, NavKeys.Forward), (KeyCode.S, NavKeys.Back), (KeyCode.DownArrow, NavKeys.Back),
             (KeyCode.A, NavKeys.Left), (KeyCode.D, NavKeys.Right), (KeyCode.RightBracket, NavKeys.Next), (KeyCode.LeftBracket, NavKeys.Previous),
             (KeyCode.Home, NavKeys.Home), (KeyCode.PageUp, NavKeys.FloorUp), (KeyCode.PageDown, NavKeys.FloorDown), (KeyCode.P, NavKeys.Tour),
-            (KeyCode.F2, NavKeys.DebugView),
+            (KeyCode.F2, NavKeys.DebugView), (KeyCode.F, NavKeys.Use),
         };
         static readonly (KeyCode key, NavKeys nav)[] HeldKeys =
         {
@@ -107,6 +107,8 @@ namespace Matterportable
             transform.SetPositionAndRotation(t.TransformPoint(Core.CameraPosition.ToUnity()), t.rotation * Core.CameraRotation.ToUnity());
             _cam.fieldOfView = Core.Fov;
             space.View = Core.View;
+            space.Props = Core.Props;
+            space.HighlightProp = Core.HighlightProp;
             foreach (var m in Core.Markers)
                 _markers.Draw(_cam, t.TransformPoint(m.Position.ToUnity()), t.TransformDirection(m.Normal.ToUnity()), m.Radius, m.Color.ToUnity(), m.Inner, m.Fill);
         }

@@ -30,6 +30,7 @@ Shader "Matterportable/Mesh"
 
             sampler2D _MainTex;
             float4 _MainTex_ST;
+            float4 _MP_PropTint; // Walk mode: the prop under the pointer, or every prop in the "Props" view (alpha: how much)
 
             struct v2f
             {
@@ -42,7 +43,10 @@ Shader "Matterportable/Mesh"
             {
                 v2f o;
                 o.pos = UnityObjectToClipPos(v.vertex);
-                o.wpos = mul(unity_ObjectToWorld, v.vertex).xyz;
+                // Photos are projected from where the vertex was scanned (the space's transform, set every frame; before
+                // that the object's own), so a moved prop keeps its own pixels.
+                float4x4 space = _MP_SpaceToWorld._m33 > 0.5 ? _MP_SpaceToWorld : unity_ObjectToWorld;
+                o.wpos = mul(space, v.vertex).xyz;
                 o.uv = TRANSFORM_TEX(v.texcoord, _MainTex);
                 return o;
             }
@@ -79,7 +83,7 @@ Shader "Matterportable/Mesh"
                 else if (view == 4) col = float3(wA, wB, 1 - coverage);
 
                 clip(_MP_Valid.z - i.wpos.y);
-                return fixed4(col, 1);
+                return fixed4(lerp(col, _MP_PropTint.rgb, _MP_PropTint.a), 1);
             }
             ENDCG
         }

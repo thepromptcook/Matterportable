@@ -54,6 +54,10 @@ namespace Matterportable
         public float LastLoadSeconds { get; private set; }
         /// <summary>What the shaders show; the navigator sets it every frame.</summary>
         public ViewBinding View { get; set; } = ViewBinding.None;
+        /// <summary>Walk mode's props and the one under the pointer (set by the navigator every frame): each prop's mesh
+        /// follows its pose.</summary>
+        public PropWorld Props { get; set; }
+        public int HighlightProp { get; set; } = -1;
 
         static readonly int IdPanoA = Shader.PropertyToID("_MP_PanoA"), IdPanoB = Shader.PropertyToID("_MP_PanoB");
         static readonly int IdDepthA = Shader.PropertyToID("_MP_DepthA"), IdDepthB = Shader.PropertyToID("_MP_DepthB");
@@ -62,6 +66,7 @@ namespace Matterportable
         static readonly int IdSpaceRot = Shader.PropertyToID("_MP_SpaceRot"), IdState = Shader.PropertyToID("_MP_State");
         static readonly int IdFaceRight = Shader.PropertyToID("_MP_FaceRight"), IdFaceUp = Shader.PropertyToID("_MP_FaceUp");
         static readonly int IdValid = Shader.PropertyToID("_MP_Valid"), IdBackground = Shader.PropertyToID("_MP_Background");
+        static readonly int IdSpaceToWorld = Shader.PropertyToID("_MP_SpaceToWorld");
 
         SpaceMesh _mesh;
         Texture2DArray _empty;
@@ -246,7 +251,7 @@ namespace Matterportable
             try
             {
                 Model = load.Result;
-                if (Model.Geometry != null) _mesh = SpaceMesh.Create(Model.Geometry, transform, "Matterport " + manifest.Name, true, addMeshCollider);
+                if (Model.Geometry != null) _mesh = SpaceMesh.Create(Model, transform, "Matterport " + manifest.Name, true, addMeshCollider);
                 CreateShaderState();
                 Panoramas = new PanoramaCache(this);
                 Scheduler = Panoramas.Scheduler = new PanoramaScheduler(Model.Sweeps, _live = settings, Panoramas, Model.Geometry != null);
@@ -340,10 +345,12 @@ namespace Matterportable
             Shader.SetGlobalMatrix(IdRotA, WorldToPano(v.PoseA));
             Shader.SetGlobalMatrix(IdRotB, WorldToPano(v.PoseB));
             Shader.SetGlobalMatrix(IdSpaceRot, Matrix4x4.Rotate(Quaternion.Inverse(t.rotation)));
+            Shader.SetGlobalMatrix(IdSpaceToWorld, t.localToWorldMatrix);
             Shader.SetGlobalVector(IdState, new Vector4(v.Blend, v.Projection, v.UseDepth ? 1f : 0f, v.DebugView));
             float clip = v.ClipHeight >= 1e9f ? v.ClipHeight : t.TransformPoint(new Vector3(0, v.ClipHeight, 0)).y; // the shader clips world y
             Shader.SetGlobalVector(IdValid, new Vector4(v.ValidA ? 1f : 0f, v.ValidB ? 1f : 0f, clip, 0f));
             Shader.SetGlobalColor(IdBackground, settings.BackgroundColor.ToUnity());
+            _mesh?.ApplyProps(Props, HighlightProp, v.DebugView);
             if (v.CullBack == _cullBack) return;
             _cullBack = v.CullBack;
             _mesh?.SetCullMode(_cullBack ? CullMode.Back : CullMode.Off);
@@ -382,7 +389,7 @@ namespace Matterportable
                 Model = SpaceModel.Load(SpaceDir, manifest, SpaceCalibration.LoadOrDefault(SpaceDir), null);
                 if (Model.Geometry != null)
                 {
-                    _mesh = SpaceMesh.Create(Model.Geometry, transform, "Matterport " + manifest.Name, false, false);
+                    _mesh = SpaceMesh.Create(Model, transform, "Matterport " + manifest.Name, false, false);
                     _mesh.LoadTexturesNow(manifest, SpaceDir);
                 }
                 Shader.SetGlobalVector(IdState, Vector4.zero); // plain mesh textures, nothing clipped

@@ -17,17 +17,19 @@ namespace Matterportable.Web
     {
         public const string Folder = "web";
         public static readonly string[] Files = { "space.json", "geometry.bin", "bvh.bin", "features.bin" };
-        const int Version = 1;
+        const int Version = 2;
 
         public static void Prepare(string dir, ILogSink log)
         {
             var manifest = SpaceManifest.Load(dir);
             var cal = SpaceCalibration.LoadOrDefault(dir);
             var meshPath = manifest.Mesh != null ? CacheLayout.Resolve(dir, manifest.Mesh.File) : null;
-            var key = $"v{Version}|{(meshPath != null ? File.GetLastWriteTimeUtc(meshPath).Ticks : 0)}|{manifest.Sweeps.Count}|{cal.ToJson().ToJson(false)}";
+            var objects = Path.Combine(dir, PropFinder.FileName);
+            string Key() => $"v{Version}|{(meshPath != null ? File.GetLastWriteTimeUtc(meshPath).Ticks : 0)}|{manifest.Sweeps.Count}|{cal.ToJson().ToJson(false)}|" +
+                            (File.Exists(objects) ? File.GetLastWriteTimeUtc(objects).Ticks : 0);
             var web = Path.Combine(dir, Folder);
             var keyFile = Path.Combine(web, "key.txt");
-            if (File.Exists(keyFile) && File.ReadAllText(keyFile) == key) return;
+            if (File.Exists(keyFile) && File.ReadAllText(keyFile) == Key()) return;
 
             MeshData mesh = meshPath != null ? DamDecoder.Decode(File.ReadAllBytes(meshPath), log) : null;
             // Never solved: run the frame and winding checks here. The server has no JPEG decoder for the photo solver,
@@ -36,6 +38,9 @@ namespace Matterportable.Web
             if (cal.NeedsSolve && mesh != null) cal = SpaceCalibrator.CheckGeometry(manifest, mesh, new SpaceCalibration(), log);
             var geo = mesh != null ? SpaceGeometry.Build(mesh, cal) : null;
             var sweeps = SweepBuilder.Build(manifest, cal, geo, log);
+            // The props (objects.json, shared with Unity and Godot) - found but not saved while the calibration is a guess.
+            var floors = new SpaceModel(manifest, cal, geo, sweeps).FloorHeights;
+            var props = geo == null ? new List<Prop>() : cal.NeedsSolve ? PropFinder.Find(geo, floors) : PropFinder.LoadOrFind(dir, geo, floors, log);
 
             Directory.CreateDirectory(web);
             if (geo != null)
@@ -44,8 +49,8 @@ namespace Matterportable.Web
                 File.WriteAllBytes(Path.Combine(web, "bvh.bin"), geo.Bvh.SerializeHierarchy());
                 File.WriteAllBytes(Path.Combine(web, "features.bin"), MeshFeatures.Build(geo).Serialize());
             }
-            File.WriteAllText(Path.Combine(web, "space.json"), JsonSerializer.Serialize(Describe(manifest, cal, geo, sweeps)));
-            File.WriteAllText(keyFile, key);
+            File.WriteAllText(Path.Combine(web, "space.json"), JsonSerializer.Serialize(Describe(manifest, cal, geo, sweeps, props)));
+            File.WriteAllText(keyFile, Key()); // after objects.json was written
         }
 
         /// <summary>"MPW1", vertex count, index count, has-UVs flag, then positions, UVs and indices (little-endian).</summary>
@@ -63,7 +68,7 @@ namespace Matterportable.Web
             }
         }
 
-        static object Describe(SpaceManifest manifest, SpaceCalibration cal, SpaceGeometry geo, List<SweepInfo> sweeps)
+        static object Describe(SpaceManifest manifest, SpaceCalibration cal, SpaceGeometry geo, List<SweepInfo> sweeps, List<Prop> props)
         {
             if (!CubeFaces.TryBuildLookup(cal.Faces, out var slice, out var right, out var up))
                 CubeFaces.TryBuildLookup(CubeFaces.DefaultMatterportLayout(), out slice, out right, out up);
@@ -86,6 +91,7 @@ namespace Matterportable.Web
                 bounds = geo != null ? new[] { V(geo.BoundsMin), V(geo.BoundsMax) } : null,
                 triangles = geo?.TriangleCount ?? 0,
                 parts,
+                objects = geo != null ? PropFinder.ToJson(props, geo).ToJson(false) : null,
                 floors = manifest.Floors.Select(f => f.Label),
                 sweeps = sweeps.Select(s =>
                 {

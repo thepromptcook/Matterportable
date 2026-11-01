@@ -27,8 +27,9 @@ export class MatterportSpace {
       faceUp: { value: Array.from({ length: 6 }, () => new THREE.Vector4()) },
       mpState: { value: new THREE.Vector4() }, mpValid: { value: new THREE.Vector4(0, 0, 1e9, 0) },
       mpBackground: { value: new THREE.Vector3() },
-      depthA: { value: null }, depthB: { value: null }, cullBack: { value: false },
+      depthA: { value: null }, depthB: { value: null }, cullBack: { value: false }, spaceMatrix: { value: new THREE.Matrix4() },
     };
+    this.props = []; // per prop: { mesh, tint } (null: nothing to draw)
     for (const p of ['A', 'B']) for (let i = 0; i < 6; i++) this.uniforms[`pano${p}${i}`] = { value: this.gray };
   }
 
@@ -77,21 +78,50 @@ export class MatterportSpace {
     const pos = new Float32Array(slice(16, vertices * 12));
     for (let i = 2; i < pos.length; i += 3) pos[i] = -pos[i]; // Core -> three (mirror Z)
     const uvStart = 16 + vertices * 12, indexStart = uvStart + (hasUvs ? vertices * 8 : 0);
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('uv', new THREE.BufferAttribute(hasUvs ? new Float32Array(slice(uvStart, vertices * 8)) : new Float32Array(vertices * 2), 2));
-    g.setIndex(new THREE.BufferAttribute(new Uint32Array(slice(indexStart, indexCount * 4)), 1));
-    this.materials = info.parts.map((p, i) => {
-      g.addGroup(p.start, p.count, i);
-      return new THREE.ShaderMaterial({
-        vertexShader: worldVertex, fragmentShader: meshFragment, glslVersion: THREE.GLSL3, side: THREE.DoubleSide,
-        uniforms: { ...this.uniforms, meshTex: { value: this.gray } },
-      });
+    const positions = new THREE.BufferAttribute(pos, 3);
+    const uvs = new THREE.BufferAttribute(hasUvs ? new Float32Array(slice(uvStart, vertices * 8)) : new Float32Array(vertices * 2), 2);
+    const index = new Uint32Array(slice(indexStart, indexCount * 4));
+    const material = (meshTex, propTint) => new THREE.ShaderMaterial({
+      vertexShader: worldVertex, fragmentShader: meshFragment, glslVersion: THREE.GLSL3, side: THREE.DoubleSide,
+      uniforms: { ...this.uniforms, meshTex, propTint },
     });
-    g.computeBoundingSphere();
-    this.mesh = new THREE.Mesh(g, this.materials);
+    const noTint = () => ({ value: new THREE.Vector4(0, 0, 0, 0) }); // (a THREE.Vector4's w defaults to 1)
+    this.materials = info.parts.map(() => material({ value: this.gray }, noTint()));
+    // The room and each prop (Core SpaceModel.MeshPieces' split): geometries sharing the vertex buffers, a group per part.
+    const owners = this.core.PropOwners(), pieces = [];
+    info.parts.forEach((p, part) => {
+      for (let t = p.start / 3; t < (p.start + p.count) / 3; t++) ((pieces[owners[t]] ??= info.parts.map(() => []))[part]).push(t);
+    });
+    const build = (parts, materials) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', positions);
+      g.setAttribute('uv', uvs);
+      const idx = new Uint32Array(parts.reduce((n, tris) => n + tris.length * 3, 0)), used = [];
+      let at = 0;
+      parts.forEach((tris, part) => {
+        if (tris.length === 0) return;
+        g.addGroup(at, tris.length * 3, used.length);
+        used.push(materials(part));
+        for (const t of tris) { idx[at++] = index[3 * t]; idx[at++] = index[3 * t + 1]; idx[at++] = index[3 * t + 2]; }
+      });
+      g.setIndex(new THREE.BufferAttribute(idx, 1));
+      g.computeBoundingSphere();
+      return new THREE.Mesh(g, used);
+    };
+    this.mesh = build(pieces[0] ?? info.parts.map(() => []), (part) => this.materials[part]);
     this.root.add(this.mesh);
-    this.depthScene.add(new THREE.Mesh(g)); // same geometry, drawn with the depth material by the panorama cache
+    for (let k = 1; k < pieces.length; k++) {
+      if (!pieces[k]) { this.props.push(null); continue; }
+      const tint = noTint();
+      const mesh = build(pieces[k], (part) => material(this.materials[part].uniforms.meshTex, tint));
+      this.root.add(mesh);
+      this.props.push({ mesh, tint });
+    }
+    // The depth cubes see the scan as it was photographed: every triangle where it was scanned.
+    const scanned = new THREE.BufferGeometry();
+    scanned.setAttribute('position', positions);
+    scanned.setIndex(new THREE.BufferAttribute(index, 1));
+    this.depthScene.add(new THREE.Mesh(scanned));
   }
 
   /** Drawn last at the far plane with the depth test, so only pixels the mesh leaves uncovered pay for it. */
@@ -142,6 +172,15 @@ export class MatterportSpace {
     u.mpState.value.set(f.blend, f.projection, f.useDepth, f.debugView);
     u.mpValid.value.set(f.validA, f.validB, f.clipHeight, 0);
     u.cullBack.value = !!(f.flags & 16);
+    u.spaceMatrix.value.copy(this.root.matrixWorld);
+    // Walk mode's props where the Core has them (Core frame -> three: mirror Z), tinted as it says.
+    this.props.forEach((pr, k) => {
+      const p = f.props[k];
+      if (!pr || !p) return;
+      pr.mesh.position.set(p[0], p[1], -p[2]);
+      pr.mesh.quaternion.set(-p[3], -p[4], p[5], p[6]);
+      pr.tint.value.set(p[7], p[8], p[9], p[10]);
+    });
   }
 
   dispose() {
@@ -151,6 +190,7 @@ export class MatterportSpace {
     if (this.sky) { this.scene.remove(this.sky); this.sky.geometry.dispose(); this.sky.material.dispose(); }
     this.mesh?.geometry.dispose();
     this.materials?.forEach((m) => m.dispose());
+    this.props.forEach((pr) => { pr?.mesh.geometry.dispose(); pr?.mesh.material.forEach((m) => m.dispose()); });
     this.textures.forEach((t) => t.dispose());
   }
 }

@@ -60,6 +60,8 @@ namespace Matterportable
             var bar = new Rect((Screen.width - w) / 2f, 12, w, 30);
             GUI.Box(bar, GUIContent.none, MpGui.Panel);
             GUI.Label(new Rect(bar.x + 12, bar.y + 7, bar.width - 24, 20), hint, MpGui.Small);
+            var propHint = ViewerText.PropHint(nav);
+            if (propHint != null) GUI.Label(new Rect(Screen.width / 2f - 240, Screen.height - 96, 480, 22), propHint, MpGui.Center);
             if (!showStats) return;
             var stats = new GUIContent(ViewerText.Stats(space.Model, nav, space.Scheduler, _fps, space.LastLoadSeconds, space.TexturesLoaded));
             float h = MpGui.Small.CalcHeight(stats, 410) + 16;

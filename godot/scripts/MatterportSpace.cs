@@ -31,10 +31,16 @@ namespace Matterportable
         public float LastLoadSeconds { get; private set; }
         /// <summary>What the shaders show; the navigator sets it every frame.</summary>
         public ViewBinding View = ViewBinding.None;
+        /// <summary>Walk mode's props and the one under the pointer (set by the navigator every frame): each prop's mesh
+        /// follows its pose.</summary>
+        public PropWorld Props;
+        public int HighlightProp = -1;
 
         readonly List<ShaderMaterial> _materials = new List<ShaderMaterial>(); // every material reading the view state
         ShaderMaterial _sky;
         readonly Dictionary<string, ShaderMaterial> _partMaterials = new Dictionary<string, ShaderMaterial>();
+        readonly List<MeshInstance3D> _propMeshes = new List<MeshInstance3D>(); // per prop (null: nothing to draw)
+        Color[] _propTints = System.Array.Empty<Color>();
         Texture2DArray _empty;
         CancellationTokenSource _cts;
         BufferLog _log = new BufferLog();
@@ -98,10 +104,10 @@ namespace Matterportable
                     catch (Exception e) when (!(e is OperationCanceledException)) { _log.Warn("Panorama alignment failed: " + GodotUtil.Unwrap(e)); }
                 }
                 Status = "Building geometry";
-                var (model, surfaces) = await Task.Run(() => { var m = SpaceModel.Load(dir, manifest, cal, log); return (m, BuildSurfaces(m.Geometry)); }, ct);
+                var (model, pieces) = await Task.Run(() => { var m = SpaceModel.Load(dir, manifest, cal, log); return (m, BuildPieces(m)); }, ct);
                 if (ct.IsCancellationRequested) return;
                 Model = model;
-                CreateMesh(surfaces);
+                CreateMeshes(pieces);
                 CreateSky();
                 SetLayout(model.Calibration);
                 Panoramas = new PanoramaCache(this);
@@ -125,21 +131,31 @@ namespace Matterportable
             public int[] Indices;
         }
 
-        /// <summary>One compact surface per material (worker thread). Mirroring Z flips the winding, which matches
-        /// Godot's front-face convention (dollhouse back-face culling shows the inside), so indices stay as they are.</summary>
-        static List<Surface> BuildSurfaces(SpaceGeometry geo)
+        /// <summary>The room and each prop (<see cref="SpaceModel.MeshPieces"/>) as compact surfaces, one per material
+        /// (worker thread). Mirroring Z flips the winding, which matches Godot's front-face convention (dollhouse back-face
+        /// culling shows the inside), so indices stay as they are.</summary>
+        static List<List<Surface>> BuildPieces(SpaceModel model)
         {
-            var surfaces = new List<Surface>();
-            if (geo == null) return surfaces;
-            foreach (var part in geo.Parts)
+            var geo = model.Geometry;
+            var pieces = new List<List<Surface>>();
+            foreach (var piece in model.MeshPieces())
             {
+                var surfaces = new List<Surface>();
+                foreach (var (part, indices) in piece) surfaces.Add(BuildSurface(geo, geo.Parts[part].Material ?? "", indices));
+                pieces.Add(surfaces);
+            }
+            return pieces;
+        }
+
+        static Surface BuildSurface(SpaceGeometry geo, string material, int[] indices)
+        {
                 var map = new Dictionary<int, int>();
                 var verts = new List<Vector3>();
                 var uvs = new List<Vector2>();
-                var idx = new int[part.Indices.Length];
+                var idx = new int[indices.Length];
                 for (int i = 0; i < idx.Length; i++)
                 {
-                    int v = part.Indices[i];
+                    int v = indices[i];
                     if (!map.TryGetValue(v, out int k))
                     {
                         map[v] = k = verts.Count;
@@ -148,30 +164,39 @@ namespace Matterportable
                     }
                     idx[i] = k;
                 }
-                surfaces.Add(new Surface { Material = part.Material ?? "", Vertices = verts.ToArray(), Uvs = uvs.ToArray(), Indices = idx });
-            }
-            return surfaces;
+                return new Surface { Material = material, Vertices = verts.ToArray(), Uvs = uvs.ToArray(), Indices = idx };
         }
 
-        void CreateMesh(List<Surface> surfaces)
+        /// <summary>The room's mesh and one per prop, sharing a material per part (so one parameter write reaches all).</summary>
+        void CreateMeshes(List<List<Surface>> pieces)
         {
-            if (surfaces.Count == 0) return;
             var shader = GD.Load<Shader>("res://shaders/mesh.gdshader");
-            var mesh = new ArrayMesh();
-            foreach (var s in surfaces)
+            for (int piece = 0; piece < pieces.Count; piece++)
             {
-                var arrays = new Godot.Collections.Array();
-                arrays.Resize((int)Mesh.ArrayType.Max);
-                arrays[(int)Mesh.ArrayType.Vertex] = s.Vertices;
-                arrays[(int)Mesh.ArrayType.TexUV] = s.Uvs;
-                arrays[(int)Mesh.ArrayType.Index] = s.Indices;
-                mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
-                var mat = new ShaderMaterial { Shader = shader };
-                mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, mat);
-                _materials.Add(mat);
-                _partMaterials[s.Material] = mat;
+                var mesh = new ArrayMesh();
+                foreach (var s in pieces[piece])
+                {
+                    var arrays = new Godot.Collections.Array();
+                    arrays.Resize((int)Mesh.ArrayType.Max);
+                    arrays[(int)Mesh.ArrayType.Vertex] = s.Vertices;
+                    arrays[(int)Mesh.ArrayType.TexUV] = s.Uvs;
+                    arrays[(int)Mesh.ArrayType.Index] = s.Indices;
+                    mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+                    if (!_partMaterials.TryGetValue(s.Material, out var mat))
+                    {
+                        _partMaterials[s.Material] = mat = new ShaderMaterial { Shader = shader };
+                        _materials.Add(mat);
+                    }
+                    mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, mat);
+                }
+                var instance = mesh.GetSurfaceCount() == 0 ? null : new MeshInstance3D
+                {
+                    Name = piece == 0 ? "Matterport Mesh" : "Prop " + (piece - 1), Mesh = mesh, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                };
+                if (instance != null) AddChild(instance);
+                if (piece > 0) _propMeshes.Add(instance);
             }
-            AddChild(new MeshInstance3D { Name = "Matterport Mesh", Mesh = mesh, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off });
+            _propTints = new Color[_propMeshes.Count];
         }
 
         void CreateSky()
@@ -263,7 +288,21 @@ namespace Matterportable
             foreach (var m in _materials)
             {
                 foreach (var (name, value) in parameters) m.SetShaderParameter(name, value);
-                if (m != _sky) m.SetShaderParameter("cull_back", v.CullBack);
+                if (m == _sky) continue;
+                m.SetShaderParameter("cull_back", v.CullBack);
+                m.SetShaderParameter("space_matrix", GlobalTransform);
+            }
+            if (Props == null) return;
+            for (int i = 0; i < _propMeshes.Count; i++)
+            {
+                if (_propMeshes[i] == null) continue;
+                var pose = Props.Poses[i];
+                _propMeshes[i].Transform = new Transform3D(new Basis(pose.Rotation.ToGodot()), pose.Translation.ToGodot());
+                var t = Props.Tint(i, HighlightProp, v.DebugView);
+                var tint = new Color(t.R, t.G, t.B, t.A);
+                if (tint == _propTints[i]) continue;
+                _propTints[i] = tint;
+                _propMeshes[i].SetInstanceShaderParameter("prop_tint", tint);
             }
         }
 

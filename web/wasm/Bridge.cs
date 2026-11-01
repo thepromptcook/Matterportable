@@ -78,6 +78,8 @@ public static partial class Bridge
             sweeps.Add(sweep);
         }
         _model = new SpaceModel(manifest, cal, geo, sweeps);
+        var objects = info["objects"].AsString();
+        if (geo != null && objects != null) _model.Props = PropFinder.FromJson(JsonValue.Parse(objects), geo) ?? new List<Prop>();
         _features = features.Length > 0 ? MeshFeatures.Deserialize(features) : null;
         _loader = new PageLoader();
         _panos = new PanoramaScheduler(sweeps, Settings, _loader, geo != null);
@@ -91,7 +93,8 @@ public static partial class Bridge
     /// hover, floor, flags (1 moving, 2 changing mode, 4 waiting, 8 tour, 16 cull back, 32 clicked), pano A, B,
     /// depth A, B, pose A, B, blend, projection, use depth, debug view, valid A, B, clip height, floor count, view clip
     /// height, active loads, queued, marker count, markers (position, normal, radius, rgba, inner, fill), command
-    /// count, commands (see <see cref="PageLoader"/>)].
+    /// count, commands (see <see cref="PageLoader"/>), highlighted prop, prop flags (1 carrying, 2 drop refused), prop
+    /// count, props (translation xyz, rotation xyzw, tint rgba)].
     /// </summary>
     [JSExport]
     public static double[] Frame(double[] i)
@@ -119,6 +122,16 @@ public static partial class Bridge
         o.Add(_loader.Commands.Count / 3);
         o.AddRange(_loader.Commands);
         _loader.Commands.Clear();
+        var props = n.Props;
+        o.Add(n.HighlightProp);
+        o.Add(props == null ? 0 : (props.Carried >= 0 ? 1 : 0) | (props.DropRefused ? 2 : 0));
+        o.Add(props?.Props.Count ?? 0);
+        for (int p = 0; props != null && p < props.Props.Count; p++)
+        {
+            var pose = props.Poses[p];
+            var tint = props.Tint(p, n.HighlightProp, v.DebugView);
+            o.AddRange(new double[] { pose.Translation.X, pose.Translation.Y, pose.Translation.Z, pose.Rotation.X, pose.Rotation.Y, pose.Rotation.Z, pose.Rotation.W, tint.R, tint.G, tint.B, tint.A });
+        }
         return o.ToArray();
     }
 
@@ -150,6 +163,18 @@ public static partial class Bridge
     public static string Stats(double fps, double loadSeconds, int texturesLoaded) => ViewerText.Stats(_model, _nav, _panos, fps, loadSeconds, texturesLoaded);
 
     [JSExport] public static string KeyHint() => ViewerText.KeyHint;
+
+    /// <summary>Walk mode's hint for the prop under the pointer or in the hands ("" for none).</summary>
+    [JSExport] public static string PropHint() => ViewerText.PropHint(_nav) ?? "";
+
+    /// <summary>Which piece each triangle is drawn with (geometry.bin's order): 0 the room, i + 1 prop i.</summary>
+    [JSExport]
+    public static int[] PropOwners()
+    {
+        var owners = new int[_model.Geometry?.TriangleCount ?? 0];
+        for (int i = 0; i < _model.Props.Count; i++) foreach (int t in _model.Props[i].Triangles) owners[t] = i + 1;
+        return owners;
+    }
 
     // ------------------------------------------------------------------ measure mode (Core MeasureTool)
 

@@ -7,11 +7,16 @@ render_mode unshaded, cull_disabled, depth_draw_opaque;
 
 uniform sampler2D mesh_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable, hint_default_black;
 uniform bool cull_back = false;
+// The space node's transform. Photos are projected from where a vertex was scanned (space_matrix * VERTEX), so a moved
+// prop (drawn with its own MODEL_MATRIX) keeps its own pixels.
+uniform mat4 space_matrix = mat4(1.0);
+// Walk mode's highlight of the prop under the pointer, and the "Props" render view (alpha: how much).
+instance uniform vec4 prop_tint = vec4(0.0);
 
 varying vec3 wpos;
 
 void vertex() {
-	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	wpos = (space_matrix * vec4(VERTEX, 1.0)).xyz;
 }
 
 void fragment() {
@@ -44,5 +49,5 @@ void fragment() {
 	else if (view == 2) col = pano;
 	else if (view == 3) col = vec3(visA, visB, 0.0);
 	else if (view == 4) col = vec3(wA, wB, 1.0 - coverage);
-	ALBEDO = col;
+	ALBEDO = mix(col, prop_tint.rgb, prop_tint.a);
 }

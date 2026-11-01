@@ -112,20 +112,23 @@ void mpBlendWeights(float t, float visA, float visB, out float wA, out float wB)
 }
 `;
 
+// Photos are projected from where a vertex was scanned (spaceMatrix: the space's transform), so a moved prop - drawn
+// with its own modelMatrix - keeps its own pixels.
 export const worldVertex = `
+uniform mat4 spaceMatrix;
 varying vec3 vWorld;
 varying vec2 vUv;
 void main() {
-  vec4 w = modelMatrix * vec4(position, 1.0);
-  vWorld = w.xyz;
+  vWorld = (spaceMatrix * vec4(position, 1.0)).xyz;
   vUv = uv;
-  gl_Position = projectionMatrix * viewMatrix * w;
+  gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0);
 }`;
 
 // The scanned mesh: the current panorama(s) projected onto it, the baked texture in dollhouse/floor plan. Unlit.
 export const meshFragment = `
 ${common}
 uniform sampler2D meshTex;
+uniform vec4 propTint;      // Walk mode: the prop under the pointer, or every prop in the "Props" view (alpha: how much)
 uniform samplerCube depthA;
 uniform samplerCube depthB;
 uniform bool cullBack;
@@ -155,7 +158,7 @@ void main() {
   else if (view == 2) col = pano;
   else if (view == 3) col = vec3(visA, visB, 0.0);
   else if (view == 4) col = vec3(wA, wB, 1.0 - coverage);
-  mpColor = vec4(col, 1.0);
+  mpColor = vec4(mix(col, propTint.rgb, propTint.a), 1.0);
 }`;
 
 // The sky box sits on the far plane (z = w), so it is drawn after the mesh and only where nothing covers it.

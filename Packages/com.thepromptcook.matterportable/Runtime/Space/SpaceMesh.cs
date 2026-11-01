@@ -9,49 +9,30 @@ using UnityEngine.Rendering;
 
 namespace Matterportable
 {
-    /// <summary>The scanned mesh as a Unity object: one mesh with a submesh + material per Matterport texture.</summary>
+    /// <summary>
+    /// The scanned mesh as Unity objects: the room, and a child per prop (moved by its pose in Walk mode), each with a
+    /// submesh per Matterport texture. One material per texture is shared by all of them.
+    /// </summary>
     internal sealed class SpaceMesh : IDisposable
     {
         static readonly int IdCull = Shader.PropertyToID("_Cull");
         static readonly int IdMainTex = Shader.PropertyToID("_MainTex");
+        static readonly int IdPropTint = Shader.PropertyToID("_MP_PropTint");
 
-        readonly Mesh _mesh;
+        readonly List<Mesh> _meshes = new List<Mesh>();
         readonly List<Material> _materials = new List<Material>();
         readonly List<Texture> _textures = new List<Texture>();
         readonly Dictionary<string, int> _materialIndex = new Dictionary<string, int>();
+        readonly List<Renderer> _props = new List<Renderer>(); // per prop (null: nothing to draw)
+        readonly MaterialPropertyBlock _block = new MaterialPropertyBlock();
+        Vector4[] _tints;
 
         public GameObject Object { get; }
         public int TexturesLoaded { get; private set; }
 
-        SpaceMesh(SpaceGeometry geo, Transform parent, string name, bool runtime, bool addCollider, Shader shader)
+        SpaceMesh(SpaceModel model, Transform parent, string name, bool runtime, bool addCollider, Shader shader)
         {
-            _mesh = new Mesh
-            {
-                name = name,
-                indexFormat = geo.Positions.Length > 65535 ? IndexFormat.UInt32 : IndexFormat.UInt16,
-                hideFlags = HideFlags.DontSave,
-            };
-            var verts = new Vector3[geo.Positions.Length];
-            for (int i = 0; i < verts.Length; i++) verts[i] = geo.Positions[i].ToUnity();
-            _mesh.vertices = verts;
-            if (geo.HasUvs)
-            {
-                var uvs = new Vector2[geo.Uvs.Length];
-                for (int i = 0; i < uvs.Length; i++) uvs[i] = new Vector2(geo.Uvs[i].X, geo.Uvs[i].Y);
-                _mesh.uv = uvs;
-            }
-            _mesh.subMeshCount = geo.Parts.Count;
-            for (int i = 0; i < geo.Parts.Count; i++) _mesh.SetTriangles(geo.Parts[i].Indices, i, false);
-            _mesh.RecalculateBounds();
-
-            Object = new GameObject("Matterport Mesh") { hideFlags = runtime ? HideFlags.DontSave : HideFlags.HideAndDontSave };
-            Object.transform.SetParent(parent, false);
-            Object.AddComponent<MeshFilter>().sharedMesh = _mesh;
-            var mr = Object.AddComponent<MeshRenderer>();
-            mr.shadowCastingMode = ShadowCastingMode.Off;
-            mr.receiveShadows = false;
-            mr.lightProbeUsage = LightProbeUsage.Off;
-            mr.reflectionProbeUsage = ReflectionProbeUsage.Off;
+            var geo = model.Geometry;
             var mats = new Material[geo.Parts.Count];
             for (int i = 0; i < mats.Length; i++)
             {
@@ -61,16 +42,89 @@ namespace Matterportable
                 _materials.Add(mats[i]);
                 _materialIndex[geo.Parts[i].Material ?? ""] = i;
             }
-            mr.sharedMaterials = mats;
-            if (addCollider) Object.AddComponent<MeshCollider>().sharedMesh = _mesh;
+            var flags = runtime ? HideFlags.DontSave : HideFlags.HideAndDontSave;
+            var pieces = model.MeshPieces();
+            Object = new GameObject("Matterport Mesh") { hideFlags = flags };
+            Object.transform.SetParent(parent, false);
+            for (int p = 0; p < pieces.Count; p++)
+            {
+                var go = p == 0 ? Object : new GameObject("Prop " + (p - 1)) { hideFlags = flags };
+                if (p > 0) go.transform.SetParent(Object.transform, false);
+                var r = pieces[p].Count > 0 ? Build(geo, pieces[p], mats, go, p == 0 ? name : name + " prop " + (p - 1), addCollider) : null;
+                if (p > 0) _props.Add(r);
+            }
+            _tints = new Vector4[_props.Count];
+        }
+
+        /// <summary>One piece as a compact mesh (only the vertices it uses) on <paramref name="go"/>.</summary>
+        Renderer Build(SpaceGeometry geo, List<(int part, int[] indices)> piece, Material[] mats, GameObject go, string meshName, bool addCollider)
+        {
+            var map = new Dictionary<int, int>();
+            var verts = new List<Vector3>();
+            var uvs = new List<Vector2>();
+            var submeshes = new List<int[]>();
+            var materials = new Material[piece.Count];
+            for (int s = 0; s < piece.Count; s++)
+            {
+                var (part, indices) = piece[s];
+                var idx = new int[indices.Length];
+                for (int i = 0; i < idx.Length; i++)
+                {
+                    int v = indices[i];
+                    if (!map.TryGetValue(v, out int k))
+                    {
+                        map[v] = k = verts.Count;
+                        verts.Add(geo.Positions[v].ToUnity());
+                        if (geo.HasUvs) uvs.Add(new Vector2(geo.Uvs[v].X, geo.Uvs[v].Y));
+                    }
+                    idx[i] = k;
+                }
+                submeshes.Add(idx);
+                materials[s] = mats[part];
+            }
+            var mesh = new Mesh { name = meshName, indexFormat = verts.Count > 65535 ? IndexFormat.UInt32 : IndexFormat.UInt16, hideFlags = HideFlags.DontSave };
+            mesh.SetVertices(verts);
+            if (geo.HasUvs) mesh.SetUVs(0, uvs);
+            mesh.subMeshCount = submeshes.Count;
+            for (int s = 0; s < submeshes.Count; s++) mesh.SetTriangles(submeshes[s], s, false);
+            mesh.RecalculateBounds();
+            _meshes.Add(mesh);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.shadowCastingMode = ShadowCastingMode.Off;
+            mr.receiveShadows = false;
+            mr.lightProbeUsage = LightProbeUsage.Off;
+            mr.reflectionProbeUsage = ReflectionProbeUsage.Off;
+            mr.sharedMaterials = materials;
+            if (addCollider) go.AddComponent<MeshCollider>().sharedMesh = mesh;
+            return mr;
         }
 
         /// <param name="runtime">Play mode (visible in the hierarchy) vs. edit-mode preview (hidden).</param>
-        public static SpaceMesh Create(SpaceGeometry geo, Transform parent, string name, bool runtime, bool addCollider)
+        public static SpaceMesh Create(SpaceModel model, Transform parent, string name, bool runtime, bool addCollider)
         {
             var shader = Shader.Find("Matterportable/Mesh");
             if (shader == null) throw new InvalidOperationException("Shader Matterportable/Mesh not found (is the package installed correctly?).");
-            return new SpaceMesh(geo, parent, name, runtime, addCollider, shader);
+            return new SpaceMesh(model, parent, name, runtime, addCollider, shader);
+        }
+
+        /// <summary>Walk mode: each prop where it is now, tinted as the Core says (<see cref="PropWorld.Tint"/>).</summary>
+        public void ApplyProps(PropWorld props, int highlight, int debugView)
+        {
+            if (props == null) return;
+            for (int i = 0; i < _props.Count && i < props.Poses.Length; i++)
+            {
+                var r = _props[i];
+                if (r == null) continue;
+                var pose = props.Poses[i];
+                r.transform.SetPositionAndRotation(Object.transform.TransformPoint(pose.Translation.ToUnity()), Object.transform.rotation * pose.Rotation.ToUnity());
+                var t = props.Tint(i, highlight, debugView);
+                var tint = new Vector4(t.R, t.G, t.B, t.A);
+                if (tint == _tints[i]) continue;
+                _tints[i] = tint;
+                _block.SetVector(IdPropTint, tint); // a vector, not a colour: no gamma conversion
+                r.SetPropertyBlock(_block);
+            }
         }
 
         public void SetCullMode(CullMode mode)
@@ -126,7 +180,8 @@ namespace Matterportable
         public void Dispose()
         {
             MpUtil.SafeDestroy(Object);
-            MpUtil.SafeDestroy(_mesh);
+            foreach (var m in _meshes) MpUtil.SafeDestroy(m);
+            _meshes.Clear();
             foreach (var m in _materials) MpUtil.SafeDestroy(m);
             foreach (var t in _textures)
             {

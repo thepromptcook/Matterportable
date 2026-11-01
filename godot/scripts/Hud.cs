@@ -5,7 +5,7 @@ using Matterportable.Core;
 namespace Matterportable
 {
     /// <summary>On-screen controls (mirrors the Unity MatterportHud): view modes, floors, measure, tour, menu, key hint,
-    /// F1 stats (text from Core <see cref="ViewerText"/>).</summary>
+    /// Walk mode's hint for the prop under the pointer, F1 stats (text from Core <see cref="ViewerText"/>).</summary>
     public partial class Hud : CanvasLayer
     {
         public MatterportSpace Space;
@@ -13,7 +13,7 @@ namespace Matterportable
         public MatterportMeasure Measure;
         public event Action MenuRequested;
 
-        Label _status, _stats;
+        Label _status, _stats, _propHint;
         HBoxContainer _floors;
         Button[] _modes;
         Button _tour, _measure;
@@ -45,6 +45,7 @@ namespace Matterportable
             root.AddChild(_status = new Label { AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0.5f, AnchorBottom = 0.5f, GrowHorizontal = Control.GrowDirection.Both, HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore });
             root.AddChild(_stats = new Label { Position = new Vector2(12, 44), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore });
             root.AddChild(new Label { AnchorRight = 1, OffsetTop = 12, HorizontalAlignment = HorizontalAlignment.Center, Text = ViewerText.KeyHint, MouseFilter = Control.MouseFilterEnum.Ignore });
+            root.AddChild(_propHint = new Label { AnchorTop = 1, AnchorRight = 1, AnchorBottom = 1, OffsetTop = -92, HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore });
         }
 
         static Button MakeButton(string text, Action onPressed)
@@ -72,6 +73,7 @@ namespace Matterportable
             _measure.Visible = _modes[3].Visible = Space.Model.Geometry != null; // both need the mesh
             if (_floorCount != Space.Model.FloorCount) BuildFloorButtons();
             _floors.Visible = Nav.Mode != ViewMode.Inside && Space.Model.FloorCount > 1;
+            _propHint.Text = ViewerText.PropHint(Nav) ?? "";
             if (_stats.Visible) _stats.Text = ViewerText.Stats(Space.Model, Nav, Space.Scheduler, Engine.GetFramesPerSecond(), Space.LastLoadSeconds, Space.TexturesLoaded);
         }
 

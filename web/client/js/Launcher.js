@@ -1,7 +1,8 @@
 // Mirrors MatterportLauncher (Unity) / Launcher (Godot): the start menu. Paste a Matterport link, open the offline
 // demo or a space the server already has; Esc or Menu returns here. The server downloads and prepares spaces.
 // URL parameters drive automated checks (tools/web-check.sh): ?open=<link|demo>&sweep=N&mode=dollhouse|floorplan|walk
-// &yaw=degrees&view=N&goto=N&walk=seconds&measure=1; window.mp reports state and offers showView() for the
+// &yaw=degrees&pitch=degrees&view=N&goto=N&walk=seconds&measure=1&move=degrees (Walk mode: F on what the middle of the
+// view is on, turn that far, F again, turn back half way); window.mp reports state and offers showView() for the
 // photo-vs-mesh comparison.
 import { MatterportSpace } from './MatterportSpace.js';
 import { MatterportNavigator, ViewMode, NavKeys } from './MatterportNavigator.js';
@@ -109,7 +110,7 @@ export class Launcher {
     const mode = { inside: ViewMode.Inside, dollhouse: ViewMode.Dollhouse, floorplan: ViewMode.Floorplan, walk: ViewMode.Walk }[this.params.get('mode')]
       ?? (this.walkMode.checked ? ViewMode.Walk : ViewMode.Inside);
     sp.core.Navigate(7, Number(this.params.get('sweep') ?? 0), mode, 0);
-    if (this.params.has('yaw')) nav.look(Number(this.params.get('yaw')));
+    if (this.params.has('yaw')) nav.look(Number(this.params.get('yaw')), Number(this.params.get('pitch') ?? 0));
     nav.setDebugView(Number(this.params.get('view') ?? 0));
     const measure = this.measure = new MatterportMeasure(sp, nav);
     this.hud = new Hud(sp, nav, measure, () => this.showMenu());
@@ -172,6 +173,8 @@ export class Launcher {
       for (const start = performance.now(); performance.now() - start < walk * 1000;) await nextFrame();
       this.nav.scriptedHeld = 0;
     }
+    const move = Number(this.params.get('move') ?? 0);
+    if (move !== 0 && this.nav.frame.mode === ViewMode.Walk) await this.moveProp(move);
     if (this.params.get('measure')) {
       const w = this.renderer.domElement.clientWidth, h = this.renderer.domElement.clientHeight;
       this.measure.setActive(true);
@@ -188,7 +191,28 @@ export class Launcher {
     const f = this.measure.frame;
     const c = this.nav.coreCamera;
     this.checks = `${this.space.status}; mode ${['Inside', 'Dollhouse', 'Floorplan', 'Walk'][this.nav.frame.mode]}, sweep ${this.nav.frame.currentSweep}, camera (${c.map((v) => v.toFixed(2)).join(', ')})` +
-      (f ? `; ${f.lines.length} measurement(s), drawing ${f.draft ? 'yes' : 'no'}, menu ${this.menu.hidden ? 'closed' : 'open'}` : '');
+      (f ? `; ${f.lines.length} measurement(s), drawing ${f.draft ? 'yes' : 'no'}, menu ${this.menu.hidden ? 'closed' : 'open'}` : '') +
+      (this.moved ? `; ${this.moved}` : '');
+  }
+
+  /** ?move=D: real F presses through the navigator, aiming through the middle of the view. */
+  async moveProp(degrees) {
+    const nav = this.nav, yaw = Number(this.params.get('yaw') ?? 0), pitch = Number(this.params.get('pitch') ?? 0);
+    const frames = async (n) => { for (let i = 0; i < n; i++) await nextFrame(); };
+    nav.centrePointer = true;
+    await frames(5);
+    const prop = nav.frame.highlightProp;
+    if (prop < 0) { this.moved = 'nothing to pick up in the middle of the view'; return; }
+    nav.scriptedPressed = NavKeys.Use;
+    await frames(5);
+    nav.look(yaw + degrees, pitch);
+    await frames(5);
+    nav.scriptedPressed = NavKeys.Use;
+    await frames(5);
+    nav.look(yaw + degrees / 2, pitch);
+    await frames(5);
+    const p = nav.frame.props[prop];
+    this.moved = `prop ${prop} moved by (${p[0].toFixed(2)}, ${p[1].toFixed(2)}, ${p[2].toFixed(2)}), carried ${nav.frame.propFlags & 1 ? 'still' : 'no longer'}`;
   }
 
   automation() {

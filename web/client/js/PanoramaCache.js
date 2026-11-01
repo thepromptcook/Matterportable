@@ -18,7 +18,7 @@ export class PanoramaCache {
     this.depthSupported = r.extensions.has('EXT_color_buffer_float') || r.extensions.has('EXT_color_buffer_half_float');
     this.depthMaterial = new THREE.ShaderMaterial({
       vertexShader: worldVertex, fragmentShader: depthFragment, glslVersion: THREE.GLSL3,
-      uniforms: { sweepPos: { value: new THREE.Vector3() } }, side: THREE.DoubleSide,
+      uniforms: { sweepPos: { value: new THREE.Vector3() }, spaceMatrix: { value: new THREE.Matrix4() } }, side: THREE.DoubleSide,
     });
   }
 

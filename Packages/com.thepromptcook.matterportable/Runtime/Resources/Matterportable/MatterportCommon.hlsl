@@ -15,6 +15,7 @@ float4 _MP_PosB;        // xyz: world position of sweep B
 float4x4 _MP_RotA;      // world -> panorama-local rotation of sweep A
 float4x4 _MP_RotB;      // world -> panorama-local rotation of sweep B
 float4x4 _MP_SpaceRot;  // world -> space-local rotation (depth maps are space-aligned)
+float4x4 _MP_SpaceToWorld; // the space's transform: photos are projected from where a vertex was scanned (props move)
 float4 _MP_FaceRight[6]; // per canonical face: right axis (xyz), source slice index (w)
 float4 _MP_FaceUp[6];    // per canonical face: up axis (xyz)
 float4 _MP_State;        // x: blend A->B, y: projection amount (1 inside, 0 dollhouse), z: use depth, w: debug view

@@ -11,7 +11,9 @@ namespace Matterportable
     /// The start menu (mirrors the Unity MatterportLauncher): paste a Matterport link, open the offline demo or a
     /// downloaded space, optionally in Walk mode. Esc or the Menu button returns here. Command line (after "--"):
     /// --open &lt;link|demo&gt;, --sweep N, --mode inside|dollhouse|floorplan|walk, --yaw degrees, --view N (F2 render view),
-    /// --goto N (move there after loading), --walk seconds (hold W), --measure (draws a measurement),
+    /// --goto N (move there after loading), --walk seconds (hold W), --pitch degrees (with --yaw), --move-prop degrees
+    /// (Walk mode: picks up what the view is on, turns that far, puts it down, turns back half way), --measure (draws a
+    /// measurement),
     /// --compare dir [--compare-sweeps N] (see RunCompare), --fidelity dir (see RunFidelity), --depth N (depth cube size),
     /// --screenshot file.png (quits after saving; with --views 0,1,2: one file per render view, file_v0.png …), for
     /// headless checks.
@@ -36,7 +38,8 @@ namespace Matterportable
         string _mode;
         int _view = -1, _goto = -1;
         int _screenshotFrames = -1;
-        float _yaw = float.NaN, _walk;
+        float _yaw = float.NaN, _walk, _pitch, _moveProp, _lookYaw;
+        int _moveStep, _moveWait = 30, _moved = -1;
         bool _walking;
         string[] _views;
         int _viewIndex;
@@ -55,6 +58,8 @@ namespace Matterportable
                 if (args[i] == "--view") int.TryParse(args[i + 1], out _view);
                 if (args[i] == "--goto") int.TryParse(args[i + 1], out _goto);
                 if (args[i] == "--yaw") float.TryParse(args[i + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _yaw);
+                if (args[i] == "--pitch") float.TryParse(args[i + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _pitch);
+                if (args[i] == "--move-prop") float.TryParse(args[i + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _moveProp);
                 if (args[i] == "--walk") float.TryParse(args[i + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _walk);
                 if (args[i] == "--screenshot") _screenshot = args[i + 1];
                 if (args[i] == "--views") _views = args[i + 1].Split(',');
@@ -315,11 +320,42 @@ namespace Matterportable
             if (e is InputEventKey k && k.Pressed && !k.Echo && k.Keycode == Key.Escape && _space != null) ShowMenu();
         }
 
+        /// <summary>--move-prop: F on what the middle of the view is on, turn, F again, turn back half way (real key presses
+        /// through the navigator), so the screenshot shows where the prop was and where it went.</summary>
+        void MovePropStep(Navigator nav)
+        {
+            if (_moveWait-- > 0) return;
+            _moveWait = 15;
+            _nav.CentrePointer = true;
+            var props = nav.Props;
+            switch (_moveStep++)
+            {
+                case 0:
+                    if (props == null || nav.HighlightProp < 0) { GD.Print("[Matterportable] move-prop: nothing to pick up in the middle of the view"); _moveProp = 0; return; }
+                    _moved = nav.HighlightProp;
+                    _nav.ScriptedPressed = NavKeys.Use;
+                    break;
+                case 1:
+                    nav.Look(_lookYaw + _moveProp, _pitch);
+                    break;
+                case 2:
+                    _nav.ScriptedPressed = NavKeys.Use;
+                    break;
+                default:
+                    nav.Look(_lookYaw + _moveProp / 2, _pitch);
+                    var p = props.Props[_moved];
+                    var at = props.Poses[_moved].Apply(p.Pivot);
+                    GD.Print($"[Matterportable] move-prop: {p.Kind} {_moved} ({p.Triangles.Length} triangles) from ({p.Pivot.X:0.00}, {p.Pivot.Y:0.00}, {p.Pivot.Z:0.00}) to ({at.X:0.00}, {at.Y:0.00}, {at.Z:0.00}), carried {(props.Carried >= 0 ? "still" : "no longer")}");
+                    _moveProp = 0;
+                    break;
+            }
+        }
+
         public override void _Process(double delta)
         {
             var nav = _nav?.Core;
             if (nav != null && _view >= 0) { nav.DebugView = _view; _view = -1; }
-            if (nav != null && !float.IsNaN(_yaw)) { nav.Look(_yaw); _yaw = float.NaN; }
+            if (nav != null && !float.IsNaN(_yaw)) { nav.Look(_lookYaw = _yaw, _pitch); _yaw = float.NaN; }
             if (_compare != null && nav != null && nav.CurrentSweep >= 0)
             {
                 var dir = _compare;
@@ -352,6 +388,11 @@ namespace Matterportable
                 _walking = true; // hold W for the given time, from when the first panoramas are in
                 _walk -= (float)delta;
                 _nav.ScriptedHeld = _walk > 0 ? NavKeys.Forward : NavKeys.None;
+                return;
+            }
+            if (_moveProp != 0 && nav.Mode == ViewMode.Walk && _space.Scheduler.ActiveLoads == 0 && _space.Scheduler.Queued == 0)
+            {
+                MovePropStep(nav);
                 return;
             }
             if (_screenshotFrames < 0 && !nav.IsMoving && !nav.IsWaitingForPanorama && _goto < 0 && _space.Scheduler.ActiveLoads == 0 && _space.Scheduler.Queued == 0 && !nav.IsChangingMode && _space.TexturesLoaded >= _space.Model.Manifest.Textures.Count)
