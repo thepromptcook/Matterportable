@@ -138,6 +138,19 @@ namespace Matterportable.Tests
         }
 
         [Test]
+        public void AtASweepThePhotoShowsWithoutTheDepthTest()
+        {
+            var v = new Viewer();
+            v.Frames(5);
+            Assert.AreEqual(0, v.Nav.View.DepthA, "the depth cube is ready");
+            Assert.IsFalse(v.Nav.View.UseDepth, "nothing the camera sees is hidden from the sweep it stands at");
+            v.Frames(1, new NavigatorInput { Pressed = NavKeys.Right });
+            v.Frames(10);
+            Assert.IsTrue(v.Nav.IsMoving);
+            Assert.IsTrue(v.Nav.View.UseDepth, "on the way, each panorama gives way where its sweep can't see");
+        }
+
+        [Test]
         public void ClickingTheFloorNearAMarkerMovesThere()
         {
             var v = new Viewer(start: 1);
@@ -213,7 +226,7 @@ namespace Matterportable.Tests
             v.Frames(180, new NavigatorInput { Held = NavKeys.Forward }); // facing +Z for 3 s
             Assert.AreEqual(3 - v.Settings.BodyRadius, v.Nav.CameraPosition.Z, 0.03f, "stopped by the wall");
             Assert.AreEqual(1f, v.Nav.CameraPosition.X, 0.01f);
-            Assert.AreEqual(1.49f, v.Nav.CameraPosition.Y, 0.01f, "eyes at the capture camera's height above the floor");
+            Assert.AreEqual(1.5f, v.Nav.CameraPosition.Y, 0.01f, "eyes at the capture camera's height above the floor");
             CollectionAssert.IsEmpty(v.Nav.Markers, "no sweep markers while walking");
         }
 

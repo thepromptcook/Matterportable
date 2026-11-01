@@ -27,24 +27,58 @@ namespace Matterportable.Core
         public bool Standing { get; }
         public Vec3 Eye => new Vec3(Feet.X, Feet.Y + EyeHeight, Feet.Z);
 
-        /// <param name="eye">Where the eyes start (a sweep's camera position); the feet go to the floor below.</param>
-        public Walker(Bvh bvh, Vec3 eye, float eyeHeight, float radius, float stepHeight)
+        /// <param name="eye">Where the eyes start (a sweep's camera position). The feet go to the floor under it, so the
+        /// eye height is the camera's height above that floor and standing there shows exactly its photo.</param>
+        public Walker(Bvh bvh, Vec3 eye, float radius, float stepHeight)
         {
             _bvh = bvh;
             _radius = radius;
             _step = stepHeight;
-            EyeHeight = eyeHeight;
-            float low = stepHeight + radius, high = Math.Max(low, eyeHeight + HeadRoom - radius);
+            Standing = FloorUnder(eye, out float floor);
+            EyeHeight = Standing ? eye.Y - floor : 1.55f;
+            float low = stepHeight + radius, high = Math.Max(low, EyeHeight + HeadRoom - radius);
             int count = 1 + (int)Math.Ceiling((high - low) / radius);
             _spheres = new float[count];
             for (int i = 0; i < count; i++) _spheres[i] = count == 1 ? low : low + (high - low) * i / (count - 1);
-            var feet = new Vec3(eye.X, eye.Y - eyeHeight, eye.Z);
-            if (FindFloor(feet, out float floor))
-            {
-                feet = new Vec3(feet.X, floor, feet.Z);
-                Standing = Resolve(ref feet); // also steps out of a wall it starts slightly inside
-            }
+            var feet = new Vec3(eye.X, eye.Y - EyeHeight, eye.Z);
             Feet = feet;
+            if (!Standing) return;
+            // Right where the camera was, or the nearest spot within half a metre the body fits (next to a table).
+            for (int ring = 0; ring <= 3; ring++)
+                for (int k = 0; k < (ring == 0 ? 1 : 12); k++)
+                {
+                    double a = k * Math.PI / 6;
+                    var p = feet + new Vec3((float)Math.Sin(a), 0, (float)Math.Cos(a)) * (0.15f * ring);
+                    if (ring > 0)
+                    {
+                        if (!FindFloor(p, out float f) || Math.Abs(f - feet.Y) > _step) continue;
+                        p = new Vec3(p.X, f, p.Z);
+                    }
+                    if (!Resolve(ref p)) continue;
+                    Feet = p;
+                    return;
+                }
+            Standing = false;
+        }
+
+        /// <summary>The floor under a standing camera: the first walkable surface 1 to 2.5 m below it (a table or counter
+        /// under a tripod is less than a metre down, so it is skipped).</summary>
+        bool FloorUnder(Vec3 eye, out float floor)
+        {
+            floor = 0;
+            var origin = eye;
+            for (int i = 0; i < 8; i++)
+            {
+                if (!_bvh.Raycast(origin, Vec3.Down, eye.Y - origin.Y < 2.5f ? 2.5f - (eye.Y - origin.Y) : 0f, out var hit)) return false;
+                float below = eye.Y - hit.Point.Y;
+                if (below >= 1f && Math.Abs(hit.Normal.Y) >= MinFloorNormal)
+                {
+                    floor = hit.Point.Y;
+                    return true;
+                }
+                origin = hit.Point + Vec3.Down * 0.01f;
+            }
+            return false;
         }
 
         /// <summary>Moves by a horizontal displacement (in sub-steps short enough never to pass through a wall),

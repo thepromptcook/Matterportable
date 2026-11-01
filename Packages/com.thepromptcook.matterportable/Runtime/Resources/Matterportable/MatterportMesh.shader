@@ -55,24 +55,15 @@ Shader "Matterportable/Mesh"
                 float3 dB = i.wpos - _MP_PosB.xyz;
                 float3 lA = mul((float3x3)_MP_RotA, dA);
                 float3 lB = mul((float3x3)_MP_RotB, dB);
-                float3 lAdx = ddx(lA), lAdy = ddy(lA);
-                float3 lBdx = ddx(lB), lBdy = ddy(lB);
-
-                float3 coord;
-                float2 gx, gy;
-                MP_PanoCoords(lA, lAdx, lAdy, coord, gx, gy);
-                float3 cA = _MP_PanoA.SampleGrad(sampler_MP_PanoA, coord, gx, gy).rgb;
-                MP_PanoCoords(lB, lBdx, lBdy, coord, gx, gy);
-                float3 cB = _MP_PanoB.SampleGrad(sampler_MP_PanoB, coord, gx, gy).rgb;
+                float3 cA = MP_SamplePano(_MP_PanoA, sampler_MP_PanoA, lA, ddx(lA), ddy(lA));
+                float3 cB = MP_SamplePano(_MP_PanoB, sampler_MP_PanoB, lB, ddx(lB), ddy(lB));
 
                 float visA = _MP_Valid.x;
                 float visB = _MP_Valid.y;
                 if (_MP_State.z > 0.5)
                 {
-                    float3 sA = mul((float3x3)_MP_SpaceRot, dA);
-                    float3 sB = mul((float3x3)_MP_SpaceRot, dB);
-                    visA *= MP_Visibility(_MP_DepthA.SampleLevel(sampler_MP_DepthA, MP_DepthCoord(sA), 0).r, length(dA));
-                    visB *= MP_Visibility(_MP_DepthB.SampleLevel(sampler_MP_DepthB, MP_DepthCoord(sB), 0).r, length(dB));
+                    visA *= MP_DepthVisibility(_MP_DepthA, sampler_MP_DepthA, mul((float3x3)_MP_SpaceRot, dA), length(dA));
+                    visB *= MP_DepthVisibility(_MP_DepthB, sampler_MP_DepthB, mul((float3x3)_MP_SpaceRot, dB), length(dB));
                 }
 
                 float wA, wB;

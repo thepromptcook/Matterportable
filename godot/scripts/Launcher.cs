@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 using Godot;
 using Matterportable.Core;
 
@@ -11,7 +12,9 @@ namespace Matterportable
     /// downloaded space, optionally in Walk mode. Esc or the Menu button returns here. Command line (after "--"):
     /// --open &lt;link|demo&gt;, --sweep N, --mode inside|dollhouse|floorplan|walk, --yaw degrees, --view N (F2 render view),
     /// --goto N (move there after loading), --walk seconds (hold W), --measure (draws a measurement),
-    /// --compare dir [--compare-sweeps N] (see RunCompare), --screenshot file.png (quits after saving), for headless checks.
+    /// --compare dir [--compare-sweeps N] (see RunCompare), --fidelity dir (see RunFidelity), --depth N (depth cube size),
+    /// --screenshot file.png (quits after saving; with --views 0,1,2: one file per render view, file_v0.png …), for
+    /// headless checks.
     /// </summary>
     public partial class Launcher : Node
     {
@@ -27,13 +30,16 @@ namespace Matterportable
         Hud _hud;
         MatterportMeasure _measure;
         int _measureStep = -1;
-        string _screenshot, _compare;
+        string _screenshot, _compare, _fidelity;
+        int _depth;
         int _compareSweeps = 6;
         string _mode;
         int _view = -1, _goto = -1;
         int _screenshotFrames = -1;
         float _yaw = float.NaN, _walk;
         bool _walking;
+        string[] _views;
+        int _viewIndex;
 
         public override void _Ready()
         {
@@ -51,7 +57,10 @@ namespace Matterportable
                 if (args[i] == "--yaw") float.TryParse(args[i + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _yaw);
                 if (args[i] == "--walk") float.TryParse(args[i + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _walk);
                 if (args[i] == "--screenshot") _screenshot = args[i + 1];
+                if (args[i] == "--views") _views = args[i + 1].Split(',');
                 if (args[i] == "--compare") _compare = args[i + 1];
+                if (args[i] == "--fidelity") _fidelity = args[i + 1];
+                if (args[i] == "--depth") int.TryParse(args[i + 1], out _depth);
                 if (args[i] == "--compare-sweeps") int.TryParse(args[i + 1], out _compareSweeps);
             }
             if (Array.IndexOf(args, "--measure") >= 0) _measureStep = 0;
@@ -147,6 +156,7 @@ namespace Matterportable
 
             CloseSpace();
             _space = new MatterportSpace { Name = "MatterportSpace", Link = link, StartSweep = sweep };
+            if (_depth > 0) _space.Settings.DepthMapSize = _depth;
             _nav = new MatterportNavigator { Name = "Camera", Space = _space };
             _measure = new MatterportMeasure { Name = "Measure", Space = _space, Navigator = _nav };
             _hud = new Hud { Space = _space, Navigator = _nav, Measure = _measure };
@@ -247,6 +257,59 @@ namespace Matterportable
             GetTree().Quit();
         }
 
+        /// <summary>
+        /// Novel-view fidelity check for Walk mode: at evenly spaced sweeps and four headings, saves the photo
+        /// (dir/s{sweep}_y{yaw}_photo.png) and the Walk-mode view from the same spot rendered without that photo, from
+        /// its neighbours' only (..._walk.png) - what Walk mode shows where no photo was taken.
+        /// tools/compare_fidelity.py scores them. Quits when done.
+        /// </summary>
+        async void RunFidelity(string dir)
+        {
+            System.IO.Directory.CreateDirectory(dir);
+            _hud.Visible = false;
+            _measure.Visible = false;
+            _space.Settings.ShowReticle = false;
+            var model = _space.Model;
+            var scheduler = _space.Scheduler;
+            int n = Math.Max(1, Math.Min(_compareSweeps, model.Sweeps.Count)), saved = 0;
+            float offset = 0; // the walk camera must stand where the photo was taken
+            async Task Frames(int count) { for (int f = 0; f < count; f++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
+            async Task Settle() { for (int f = 0; f < 900 && (scheduler.ActiveLoads > 0 || scheduler.Queued > 0); f++) await Frames(1); await Frames(30); }
+            for (int k = 0; k < n; k++)
+            {
+                int sweep = (int)((k + 0.5f) * model.Sweeps.Count / n);
+                var nav = _nav.Core;
+                nav.ExcludedSweep = -1;
+                nav.Teleport(sweep, 0f, 10f);
+                await Settle();
+                foreach (int yaw in new[] { 0, 90, 180, 270 })
+                {
+                    nav.Teleport(sweep, yaw, 10f);
+                    nav.DebugView = 2;
+                    await Frames(3);
+                    GetViewport().GetTexture().GetImage().SavePng(System.IO.Path.Combine(dir, $"s{sweep:D3}_y{yaw:D3}_photo.png"));
+                }
+                nav.ExcludedSweep = sweep;
+                nav.DebugView = 0;
+                float radius = _space.Settings.BodyRadius;
+                _space.Settings.BodyRadius = 0.01f; // stand exactly at the sweep: no pushing out of nearby furniture
+                nav.SetMode(ViewMode.Walk);
+                _space.Settings.BodyRadius = radius;
+                if (nav.Mode != ViewMode.Walk) continue; // nowhere to stand here
+                offset = Math.Max(offset, (nav.CameraPosition - model.Sweeps[sweep].Position).Length);
+                await Settle();
+                foreach (int yaw in new[] { 0, 90, 180, 270 })
+                {
+                    nav.Look(yaw, 10f);
+                    await Frames(3);
+                    GetViewport().GetTexture().GetImage().SavePng(System.IO.Path.Combine(dir, $"s{sweep:D3}_y{yaw:D3}_walk.png"));
+                }
+                saved++;
+            }
+            GD.Print($"[Matterportable] fidelity: {saved} sweeps saved to {dir}; walk camera at most {offset * 100:0.0} cm from the photo's spot");
+            GetTree().Quit();
+        }
+
         public override void _UnhandledInput(InputEvent e)
         {
             if (e is InputEventKey k && k.Pressed && !k.Echo && k.Keycode == Key.Escape && _space != null) ShowMenu();
@@ -262,6 +325,12 @@ namespace Matterportable
                 var dir = _compare;
                 _compare = null;
                 RunCompare(dir);
+            }
+            if (_fidelity != null && nav != null && nav.CurrentSweep >= 0)
+            {
+                var dir = _fidelity;
+                _fidelity = null;
+                RunFidelity(dir);
             }
             if (_screenshot == null || _space == null) return;
             if (_space.Error != null) { GD.PrintErr("[Matterportable] " + _space.Error); GetTree().Quit(1); return; }
@@ -287,9 +356,17 @@ namespace Matterportable
             }
             if (_screenshotFrames < 0 && !nav.IsMoving && !nav.IsWaitingForPanorama && _goto < 0 && _space.Scheduler.ActiveLoads == 0 && _space.Scheduler.Queued == 0 && !nav.IsChangingMode && _space.TexturesLoaded >= _space.Model.Manifest.Textures.Count)
                 _screenshotFrames = 30;
+            if (_screenshotFrames > 0 && _views != null && _viewIndex == 0 && nav.DebugView != int.Parse(_views[0])) nav.DebugView = int.Parse(_views[0]);
             if (_screenshotFrames > 0 && --_screenshotFrames == 0)
             {
-                var err = GetViewport().GetTexture().GetImage().SavePng(_screenshot);
+                var path = _views == null ? _screenshot : _screenshot.Replace(".png", $"_v{_views[_viewIndex]}.png");
+                var err = GetViewport().GetTexture().GetImage().SavePng(path);
+                if (_views != null && ++_viewIndex < _views.Length)
+                {
+                    nav.DebugView = int.Parse(_views[_viewIndex]);
+                    _screenshotFrames = 5;
+                    return;
+                }
                 var measured = _measure.Tool == null ? "" : $"; {_measure.Tool.Lines.Count} measurement(s), drawing {(_measure.Tool.Draft != null ? "yes" : "no")}, menu {(_menu.Visible ? "open" : "closed")}";
                 var at = nav.CameraPosition;
                 GD.Print($"[Matterportable] {_space.Status}; mode {nav.Mode}, sweep {nav.CurrentSweep}, camera ({at.X:0.00}, {at.Y:0.00}, {at.Z:0.00}){measured}; screenshot {(err == Error.Ok ? "saved" : "failed: " + err)}");

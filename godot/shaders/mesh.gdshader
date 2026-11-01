@@ -23,18 +23,14 @@ void fragment() {
 	vec3 lA = dA * rot_a;
 	vec3 lB = dB * rot_b;
 
-	vec3 coord;
-	vec2 gx, gy;
-	mp_pano_coords(lA, dFdx(lA), dFdy(lA), coord, gx, gy);
-	vec3 cA = textureGrad(pano_a, coord, gx, gy).rgb;
-	mp_pano_coords(lB, dFdx(lB), dFdy(lB), coord, gx, gy);
-	vec3 cB = textureGrad(pano_b, coord, gx, gy).rgb;
+	vec3 cA = mp_sample_pano(pano_a, lA);
+	vec3 cB = mp_sample_pano(pano_b, lB);
 
 	float visA = mp_valid.x;
 	float visB = mp_valid.y;
 	if (mp_state.z > 0.5) {
-		visA *= mp_visibility(textureLod(depth_a, mp_depth_coord(dA), 0.0).r, length(dA));
-		visB *= mp_visibility(textureLod(depth_b, mp_depth_coord(dB), 0.0).r, length(dB));
+		visA *= mp_depth_visibility(depth_a, dA);
+		visB *= mp_depth_visibility(depth_b, dB);
 	}
 
 	float wA, wB;

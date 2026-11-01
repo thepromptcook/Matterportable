@@ -3,13 +3,18 @@
 // so V is bottom-up as in Core and Unity. Each panorama is six 2D textures (sampler arrays can't be indexed at run
 // time in WebGL); depth maps are cube render targets sampled by three.js world direction.
 const faceSamplers = (p) => [0, 1, 2, 3, 4, 5].map((i) => `uniform sampler2D pano${p}${i};`).join('\n');
-const faceSwitch = (p) => `vec3 samplePano${p}(int s, vec2 uv, vec2 gx, vec2 gy) {
-  if (s == 0) return textureGrad(pano${p}0, uv, gx, gy).rgb;
-  if (s == 1) return textureGrad(pano${p}1, uv, gx, gy).rgb;
-  if (s == 2) return textureGrad(pano${p}2, uv, gx, gy).rgb;
-  if (s == 3) return textureGrad(pano${p}3, uv, gx, gy).rgb;
-  if (s == 4) return textureGrad(pano${p}4, uv, gx, gy).rgb;
-  return textureGrad(pano${p}5, uv, gx, gy).rgb;
+// samplePanoA/B(l): the panorama's colour in the panorama-local direction l (see mpSeamLod).
+const faceSample = (p, i) => `lod < 0.0 ? textureGrad(pano${p}${i}, uv, gx, gy).rgb : textureLod(pano${p}${i}, uv, lod).rgb`;
+const faceSwitch = (p) => `vec3 samplePano${p}(vec3 l) {
+  int s; vec2 uv, gx, gy;
+  mpPanoCoords(l, dFdx(l), dFdy(l), s, uv, gx, gy);
+  float lod = mpSeamLod(uv, gx, gy, float(textureSize(pano${p}0, 0).x));
+  if (s == 0) return ${faceSample(p, 0)};
+  if (s == 1) return ${faceSample(p, 1)};
+  if (s == 2) return ${faceSample(p, 2)};
+  if (s == 3) return ${faceSample(p, 3)};
+  if (s == 4) return ${faceSample(p, 4)};
+  return ${faceSample(p, 5)};
 }`;
 
 export const common = `
@@ -56,12 +61,49 @@ void mpPanoCoords(vec3 l, vec3 ldx, vec3 ldy, out int slice, out vec2 uv, out ve
   gy = (vec2(dot(ldy, R), dot(ldy, U)) * m - n * dot(ldy, F)) * k;
 }
 
+// Panoramas are filtered with the analytic gradients (anisotropic, lod -1) - except in a thin band along the face
+// edges, where gradient sampling draws a dashed line along the seam (pixel quads there straddle two faces); there, an
+// explicit level of detail from the same gradients.
+float mpSeamLod(vec2 uv, vec2 gx, vec2 gy, float size) {
+  float footprint = max(length(gx), length(gy)) * size;
+  float edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)) * size;
+  return edge > 2.0 * footprint + 1.0 ? -1.0 : max(log2(footprint), 0.0);
+}
+
 ${faceSwitch('A')}
 ${faceSwitch('B')}
 
 float mpVisibility(float stored, float dist) {
   float bias = 0.05 + 0.03 * dist;
   return clamp(1.0 - (dist - stored - bias) / (0.5 * bias + 0.03), 0.0, 1.0);
+}
+
+// A direction for cube-map face coordinates sc in [-1, 1], in GL's face layout (how the hardware looks directions up).
+vec3 mpCubeDir(int face, vec2 sc) {
+  if (face == 0) return vec3(1.0, -sc.y, -sc.x);
+  if (face == 1) return vec3(-1.0, -sc.y, sc.x);
+  if (face == 2) return vec3(sc.x, 1.0, sc.y);
+  if (face == 3) return vec3(sc.x, -1.0, -sc.y);
+  if (face == 4) return vec3(sc.x, -sc.y, 1.0);
+  return vec3(-sc.x, -sc.y, -1.0);
+}
+
+// Percentage-closer filtering, as MP_DepthVisibility in Unity and Godot: the visibility test on the four nearest texels
+// of the depth cube (point-sampled), blended bilinearly. w: the direction from the sweep in three's frame.
+float mpDepthVisibility(samplerCube depth, vec3 w, float dist) {
+  vec3 a = abs(w);
+  int face; float ma; vec2 sc;
+  if (a.x >= a.y && a.x >= a.z) { face = w.x >= 0.0 ? 0 : 1; ma = a.x; sc = vec2(w.x >= 0.0 ? -w.z : w.z, -w.y); }
+  else if (a.y >= a.z) { face = w.y >= 0.0 ? 2 : 3; ma = a.y; sc = vec2(w.x, w.y >= 0.0 ? w.z : -w.z); }
+  else { face = w.z >= 0.0 ? 4 : 5; ma = a.z; sc = vec2(w.z >= 0.0 ? w.x : -w.x, -w.y); }
+  float size = float(textureSize(depth, 0).x);
+  vec2 t = (0.5 * sc / ma + 0.5) * size - 0.5, f = fract(t), base = (floor(t) + 0.5) / size * 2.0 - 1.0;
+  vec2 step = vec2(2.0 / size, 0.0);
+  float v00 = mpVisibility(textureLod(depth, mpCubeDir(face, base), 0.0).r, dist);
+  float v10 = mpVisibility(textureLod(depth, mpCubeDir(face, base + step.xy), 0.0).r, dist);
+  float v01 = mpVisibility(textureLod(depth, mpCubeDir(face, base + step.yx), 0.0).r, dist);
+  float v11 = mpVisibility(textureLod(depth, mpCubeDir(face, base + step.xx), 0.0).r, dist);
+  return mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
 }
 
 void mpBlendWeights(float t, float visA, float visB, out float wA, out float wB) {
@@ -95,18 +137,13 @@ void main() {
   vec3 tex = texture(meshTex, vUv).rgb;
   vec3 dA = toCore(vWorld - posA);
   vec3 dB = toCore(vWorld - posB);
-  vec3 lA = dA * rotA;
-  vec3 lB = dB * rotB;
-  int s; vec2 uv, gx, gy;
-  mpPanoCoords(lA, dFdx(lA), dFdy(lA), s, uv, gx, gy);
-  vec3 cA = samplePanoA(s, uv, gx, gy);
-  mpPanoCoords(lB, dFdx(lB), dFdy(lB), s, uv, gx, gy);
-  vec3 cB = samplePanoB(s, uv, gx, gy);
+  vec3 cA = samplePanoA(dA * rotA);
+  vec3 cB = samplePanoB(dB * rotB);
   float visA = mpValid.x;
   float visB = mpValid.y;
   if (mpState.z > 0.5) {
-    visA *= mpVisibility(texture(depthA, vWorld - posA).r, length(dA));
-    visB *= mpVisibility(texture(depthB, vWorld - posB).r, length(dB));
+    visA *= mpDepthVisibility(depthA, vWorld - posA, length(dA));
+    visB *= mpDepthVisibility(depthB, vWorld - posB, length(dB));
   }
   float wA, wB;
   mpBlendWeights(mpState.x, visA, visB, wA, wB);
@@ -136,13 +173,8 @@ ${common}
 varying vec3 vWorld;
 void main() {
   vec3 d = toCore(normalize(vWorld - cameraPosition));
-  vec3 lA = d * rotA;
-  vec3 lB = d * rotB;
-  int s; vec2 uv, gx, gy;
-  mpPanoCoords(lA, dFdx(lA), dFdy(lA), s, uv, gx, gy);
-  vec3 cA = samplePanoA(s, uv, gx, gy);
-  mpPanoCoords(lB, dFdx(lB), dFdy(lB), s, uv, gx, gy);
-  vec3 cB = samplePanoB(s, uv, gx, gy);
+  vec3 cA = samplePanoA(d * rotA);
+  vec3 cB = samplePanoB(d * rotB);
   float wA, wB;
   mpBlendWeights(mpState.x, mpValid.x, mpValid.y, wA, wB);
   vec3 pano = (cA * wA + cB * wB) / max(wA + wB, 1e-5);

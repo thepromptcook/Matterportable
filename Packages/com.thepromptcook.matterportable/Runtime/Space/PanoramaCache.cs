@@ -69,7 +69,7 @@ namespace Matterportable
             {
                 name = "Matterport depth " + r.sweep,
                 wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Bilinear,
+                filterMode = FilterMode.Point, // the shader filters the visibility test, not the depths (MP_DepthVisibility)
                 hideFlags = HideFlags.HideAndDontSave,
             };
             int n = r.size * r.size;

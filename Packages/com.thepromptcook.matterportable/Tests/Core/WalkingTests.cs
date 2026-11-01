@@ -9,7 +9,7 @@ namespace Matterportable.Tests
         const float Radius = 0.25f, Step = 0.3f, EyeHeight = 1.5f;
 
         static Walker At(SpaceGeometry geo, float x, float z, float floor = 0) =>
-            new Walker(geo.Bvh, new Vec3(x, floor + EyeHeight, z), EyeHeight, Radius, Step);
+            new Walker(geo.Bvh, new Vec3(x, floor + EyeHeight, z), Radius, Step);
 
         /// <summary>Walks a distance in a direction, 5 cm per 1/60 s frame.</summary>
         static void Walk(Walker w, Vec3 direction, float meters)
@@ -75,6 +75,18 @@ namespace Matterportable.Tests
             w = At(high, 1, 1.5f);
             Walk(w, Vec3.Right, 2);
             Assert.AreEqual(3f, w.Feet.X, 0.03f, "the body passes under a beam above its head");
+        }
+
+        [Test]
+        public void StartsOnTheFloorUnderACameraAboveATable()
+        {
+            var room = TestSpaces.Room(0, (new Vec3(1.5f, 0, 1), new Vec3(2.5f, 0.75f, 2)));
+            var w = new Walker(room.Bvh, new Vec3(2.45f, 1.5f, 1.5f), Radius, Step); // the camera is over the table's edge
+            Assert.IsTrue(w.Standing);
+            Assert.AreEqual(0f, w.Feet.Y, 1e-4f, "the table top is skipped: the feet are on the floor");
+            Assert.AreEqual(1.5f, w.EyeHeight, 1e-4f);
+            Assert.GreaterOrEqual(w.Feet.X, 2.5f + Radius - 0.02f, "stepped out from under the table");
+            Assert.Less(w.Feet.X, 2.45f + 0.5f);
         }
 
         [Test]

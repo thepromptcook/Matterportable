@@ -38,3 +38,6 @@ crashlytics-build.properties
 /tools/**/bin/
 /tools/**/obj/
 !/tools/**/*.csproj
+
+# Python bytecode (tools/*.py)
+__pycache__/

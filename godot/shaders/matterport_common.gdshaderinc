@@ -5,8 +5,8 @@
 
 uniform sampler2DArray pano_a : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
 uniform sampler2DArray pano_b : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
-uniform sampler2DArray depth_a : filter_linear, repeat_disable;
-uniform sampler2DArray depth_b : filter_linear, repeat_disable;
+uniform sampler2DArray depth_a : filter_nearest, repeat_disable;
+uniform sampler2DArray depth_b : filter_nearest, repeat_disable;
 uniform vec3 pos_a;            // Godot world position of sweep A
 uniform vec3 pos_b;
 uniform mat3 rot_a;            // WorldFromPano of sweep A (Core frame); l = d * rot_a is world -> panorama-local
@@ -49,6 +49,19 @@ void mp_pano_coords(vec3 l, vec3 ldx, vec3 ldy, out vec3 coord, out vec2 gx, out
 	gy.y = -gy.y;
 }
 
+// A panorama sample, filtered with the analytic gradients (anisotropic) - except in a thin band along the face edges,
+// where gradient sampling draws a dashed line along the seam (pixel quads there straddle two faces); an explicit level
+// of detail from the same gradients does not. Measured: even isotropic gradients bring the line back.
+vec3 mp_sample_pano(sampler2DArray pano, vec3 l) {
+	vec3 coord;
+	vec2 gx, gy;
+	mp_pano_coords(l, dFdx(l), dFdy(l), coord, gx, gy);
+	float size = float(textureSize(pano, 0).x), footprint = max(length(gx), length(gy)) * size;
+	float edge = min(min(coord.x, 1.0 - coord.x), min(coord.y, 1.0 - coord.y)) * size;
+	if (edge > 2.0 * footprint + 1.0) return textureGrad(pano, coord, gx, gy).rgb;
+	return textureLod(pano, coord, max(log2(footprint), 0.0)).rgb;
+}
+
 // Canonical face coordinates for the space-aligned depth maps (CubeFaces.Canonical in C#).
 vec3 mp_depth_coord(vec3 d) {
 	vec3 a = abs(d);
@@ -71,6 +84,19 @@ vec3 mp_depth_coord(vec3 d) {
 float mp_visibility(float stored, float dist) {
 	float bias = 0.05 + 0.03 * dist;
 	return clamp(1.0 - (dist - stored - bias) / (0.5 * bias + 0.03), 0.0, 1.0);
+}
+
+// Percentage-closer filtering: the visibility test on the four nearest depth texels, blended bilinearly (bilinear
+// depth would mix near and far depths at silhouettes and dot the outlines of objects).
+float mp_depth_visibility(sampler2DArray depth, vec3 d) {
+	vec3 c = mp_depth_coord(d);
+	float size = float(textureSize(depth, 0).x), dist = length(d);
+	vec2 t = c.xy * size - 0.5, f = fract(t), base = (floor(t) + 0.5) / size, step = vec2(1.0 / size, 0.0);
+	float v00 = mp_visibility(textureLod(depth, vec3(base, c.z), 0.0).r, dist);
+	float v10 = mp_visibility(textureLod(depth, vec3(base + step.xy, c.z), 0.0).r, dist);
+	float v01 = mp_visibility(textureLod(depth, vec3(base + step.yx, c.z), 0.0).r, dist);
+	float v11 = mp_visibility(textureLod(depth, vec3(base + step.xx, c.z), 0.0).r, dist);
+	return mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
 }
 
 void mp_blend_weights(float t, float vis_a, float vis_b, out float w_a, out float w_b) {

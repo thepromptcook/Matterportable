@@ -47,6 +47,22 @@ void MP_PanoCoords(float3 l, float3 ldx, float3 ldy, out float3 coord, out float
     gy = (float2(dot(ldy, R), dot(ldy, U)) * m - n * dot(ldy, F)) * k;
 }
 
+// A panorama sample, filtered with the analytic gradients (anisotropic) - except in a thin band along the face edges,
+// where gradient sampling draws a dashed line along the seam (pixel quads there straddle two faces); an explicit level
+// of detail from the same gradients does not.
+float3 MP_SamplePano(Texture2DArray pano, SamplerState s, float3 l, float3 ldx, float3 ldy)
+{
+    float3 coord;
+    float2 gx, gy;
+    MP_PanoCoords(l, ldx, ldy, coord, gx, gy);
+    float size, height, slices;
+    pano.GetDimensions(size, height, slices);
+    float footprint = max(length(gx), length(gy)) * size;
+    float edge = min(min(coord.x, 1 - coord.x), min(coord.y, 1 - coord.y)) * size;
+    if (edge > 2 * footprint + 1) return pano.SampleGrad(s, coord, gx, gy).rgb;
+    return pano.SampleLevel(s, coord, max(log2(footprint), 0)).rgb;
+}
+
 // Canonical face coordinates for the space-aligned depth maps.
 float3 MP_DepthCoord(float3 d)
 {
@@ -77,6 +93,23 @@ float MP_Visibility(float stored, float dist)
 {
     float bias = 0.05 + 0.03 * dist;
     return saturate(1.0 - (dist - stored - bias) / (0.5 * bias + 0.03));
+}
+
+// Percentage-closer filtering: the visibility test on the four nearest depth texels (point-sampled), blended
+// bilinearly. Bilinear depth would mix near and far depths at silhouettes and dot the outlines of objects.
+// s: the direction from the sweep in the space frame (the depth maps are space-aligned).
+float MP_DepthVisibility(Texture2DArray depth, SamplerState smp, float3 s, float dist)
+{
+    float3 c = MP_DepthCoord(s);
+    float size, height, slices;
+    depth.GetDimensions(size, height, slices);
+    float2 t = c.xy * size - 0.5, f = frac(t), base = (floor(t) + 0.5) / size;
+    float2 step = float2(1 / size, 0);
+    float v00 = MP_Visibility(depth.SampleLevel(smp, float3(base, c.z), 0).r, dist);
+    float v10 = MP_Visibility(depth.SampleLevel(smp, float3(base + step.xy, c.z), 0).r, dist);
+    float v01 = MP_Visibility(depth.SampleLevel(smp, float3(base + step.yx, c.z), 0).r, dist);
+    float v11 = MP_Visibility(depth.SampleLevel(smp, float3(base + step.xx, c.z), 0).r, dist);
+    return lerp(lerp(v00, v10, f.x), lerp(v01, v11, f.x), f.y);
 }
 
 // Blend weights for panoramas A and B: B's share grows with t, and each takes over where the other is occluded.

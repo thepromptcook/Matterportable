@@ -39,15 +39,8 @@ Shader "Matterportable/Skybox"
                 float3 d = normalize(i.dir);
                 float3 lA = mul((float3x3)_MP_RotA, d);
                 float3 lB = mul((float3x3)_MP_RotB, d);
-                float3 lAdx = ddx(lA), lAdy = ddy(lA);
-                float3 lBdx = ddx(lB), lBdy = ddy(lB);
-
-                float3 coord;
-                float2 gx, gy;
-                MP_PanoCoords(lA, lAdx, lAdy, coord, gx, gy);
-                float3 cA = _MP_PanoA.SampleGrad(sampler_MP_PanoA, coord, gx, gy).rgb;
-                MP_PanoCoords(lB, lBdx, lBdy, coord, gx, gy);
-                float3 cB = _MP_PanoB.SampleGrad(sampler_MP_PanoB, coord, gx, gy).rgb;
+                float3 cA = MP_SamplePano(_MP_PanoA, sampler_MP_PanoA, lA, ddx(lA), ddy(lA));
+                float3 cB = MP_SamplePano(_MP_PanoB, sampler_MP_PanoB, lB, ddx(lB), ddy(lB));
 
                 float wA, wB;
                 MP_BlendWeights(_MP_State.x, _MP_Valid.x, _MP_Valid.y, wA, wB);

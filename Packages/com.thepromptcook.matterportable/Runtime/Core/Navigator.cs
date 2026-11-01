@@ -75,6 +75,8 @@ namespace Matterportable.Core
         /// <summary>Measure mode: clicks are left to the measure tool (<see cref="Clicked"/>); markers and the move
         /// cursor hide.</summary>
         public bool Measuring;
+        /// <summary>A sweep whose photo Walk mode never shows (fidelity checks: the view where no photo was taken).</summary>
+        public int ExcludedSweep = -1;
         /// <summary>A left click (not a drag) ended this frame.</summary>
         public bool Clicked { get; private set; }
         public bool IsMoving => _move.Active;
@@ -491,10 +493,7 @@ namespace Matterportable.Core
         /// stand (no floor below, as at unplaced 360° photos).</summary>
         bool StartWalk(Vec3 eye)
         {
-            var sweep = Sweeps[Math.Max(0, CurrentSweep)];
-            // Eyes at the capture camera's height, so standing at a sweep shows exactly its photo.
-            float height = sweep.FloorHit ? Clamp(sweep.Position.Y - sweep.FloorPoint.Y, 1f, 2f) : 1.55f;
-            var walker = new Walker(_space.Geometry.Bvh, eye, height, _s.BodyRadius, _s.StepHeight);
+            var walker = new Walker(_space.Geometry.Bvh, eye, _s.BodyRadius, _s.StepHeight);
             if (!walker.Standing) return false;
             _walker = walker;
             _walkEyeY = _walker.Eye.Y;
@@ -539,6 +538,7 @@ namespace Matterportable.Core
             for (int i = 0; i < Sweeps.Count; i++) _byDistance.Add(i);
             _byDistance.Sort((x, y) => (SweepPos(x) - eye).SqrLength.CompareTo((SweepPos(y) - eye).SqrLength));
             int found = 0;
+            _byDistance.Remove(ExcludedSweep);
             for (int k = 0; k < _byDistance.Count && k < 8 && found < 3; k++)
                 if (_space.LineOfSight(eye, SweepPos(_byDistance[k]))) _near[found++] = _byDistance[k];
             if (found == 0) _near[found++] = _byDistance[0]; // nothing in view: the nearest anyway
@@ -706,6 +706,9 @@ namespace Matterportable.Core
             _panos.Touch(b);
             bool validA = a >= 0 && _panos.IsReady(a), validB = b >= 0 && _panos.IsReady(b);
             bool depthA = a >= 0 && _panos.HasDepth(a), depthB = b >= 0 && _panos.HasDepth(b);
+            // Standing at the sweep, the camera sees nothing that is hidden from it: no depth test, so the depth map's
+            // resolution draws no lines along outlines, and the view is exactly the photo.
+            bool atSweep = blend <= 0 && a >= 0 && (CameraPosition - SweepPos(a)).Length < 0.01f;
             int ia = validA ? a : validB ? b : Math.Max(0, a), last = Sweeps.Count - 1;
             View = new ViewBinding
             {
@@ -717,7 +720,7 @@ namespace Matterportable.Core
                 PoseB = Math.Min(validB ? b : ia, last),
                 Blend = validA && validB ? blend : validB ? 1f : 0f,
                 Projection = _projection,
-                UseDepth = _s.DepthMapSize > 0 && depthA && (b < 0 || depthB || blend <= 0),
+                UseDepth = _s.DepthMapSize > 0 && depthA && !atSweep && (b < 0 || depthB || blend <= 0),
                 DebugView = DebugView,
                 ValidA = validA || validB,
                 ValidB = validA && validB,

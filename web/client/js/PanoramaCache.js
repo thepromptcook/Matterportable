@@ -85,7 +85,10 @@ export class PanoramaCache {
 
   renderDepth(sweep) {
     const size = this.space.settings.depthMapSize;
-    const target = new THREE.WebGLCubeRenderTarget(size, { type: THREE.HalfFloatType, generateMipmaps: false, minFilter: THREE.LinearFilter });
+    // Point-sampled: the shader filters the visibility test, not the depths (mpDepthVisibility).
+    const target = new THREE.WebGLCubeRenderTarget(size, {
+      type: THREE.HalfFloatType, generateMipmaps: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+    });
     const camera = new THREE.CubeCamera(0.03, 1000, target);
     const pos = this.space.sweeps[sweep].position;
     camera.position.copy(pos);
