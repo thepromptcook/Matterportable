@@ -1,4 +1,3 @@
-using System;
 using Matterportable.Core;
 using UnityEngine;
 
@@ -12,6 +11,7 @@ namespace Matterportable
     /// </summary>
     [RequireComponent(typeof(MatterportNavigator))]
     [DisallowMultipleComponent]
+    [DefaultExecutionOrder(100)] // after the navigator, which reports this frame's click
     [AddComponentMenu("Matterportable/Matterport Measure")]
     public sealed class MatterportMeasure : MonoBehaviour
     {
@@ -31,40 +31,31 @@ namespace Matterportable
             _escapeFrame = -1;
         }
 
-        static readonly Color Shadow = new Color(0f, 0f, 0f, 0.55f), Ink = new Color(0.1f, 0.1f, 0.12f);
-        static readonly Color Accent = new Color(0.18f, 0.45f, 0.85f), Hover = new Color(0.6f, 0.78f, 1f);
-        static readonly Color AxisX = new Color(0.95f, 0.36f, 0.3f), AxisZ = new Color(0.38f, 0.85f, 0.42f), AxisVertical = new Color(0.35f, 0.62f, 1f);
-
-        readonly MeasureDrawList _draw = new MeasureDrawList();
+        readonly MeasureOverlay _items = new MeasureOverlay();
         MatterportNavigator _nav;
-        Camera _cam;
         SpaceGeometry _toolGeometry;
         static Texture2D _lineTex, _dotTex, _ringTex, _pillTex, _pillSelectedTex;
         static GUIStyle _pill, _pillSelected;
 
-        void Awake()
-        {
-            _nav = GetComponent<MatterportNavigator>();
-            _cam = GetComponent<Camera>();
-        }
+        void Awake() => _nav = GetComponent<MatterportNavigator>();
 
         void OnDisable() => SetActive(false);
 
         /// <summary>Enters or leaves measure mode. Measurements stay until the space is closed (they are temporary).</summary>
         public void SetActive(bool on)
         {
-            var space = _nav != null ? _nav.space : null;
-            if (on && (space == null || !space.IsLoaded || space.Geometry == null)) return;
+            var geometry = _nav != null && _nav.space != null && _nav.Core != null ? _nav.space.Model.Geometry : null;
+            if (on && geometry == null) return;
             if (on == Active) return;
             Active = on;
             _activeCount += on ? 1 : -1;
-            if (on && _toolGeometry != space.Geometry)
+            if (on && _toolGeometry != geometry)
             {
-                Tool = new MeasureTool(space.Geometry);
-                _toolGeometry = space.Geometry;
+                Tool = new MeasureTool(geometry);
+                _toolGeometry = geometry;
             }
             if (!on) Tool?.Finish();
-            if (_nav != null) _nav.ClickHandler = on ? _ => { Tool.Click(); return true; } : (Func<Vector2, bool>)null;
+            if (_nav != null && _nav.Core != null) _nav.Core.Measuring = on; // the navigator then leaves clicks to us
         }
 
         void Update()
@@ -72,8 +63,8 @@ namespace Matterportable
             NavInput.BeginFrame();
             if (NavInput.KeyDown(KeyCode.M)) SetActive(!Active);
             if (!Active) return;
-            var space = _nav.space;
-            if (space == null || !space.IsLoaded)
+            var nav = _nav.Core;
+            if (nav == null)
             {
                 SetActive(false);
                 return;
@@ -88,100 +79,50 @@ namespace Matterportable
             if (NavInput.KeyDown(KeyCode.Return) || NavInput.KeyDown(KeyCode.KeypadEnter)) Tool.Finish();
 
             var mouse = NavInput.MousePosition;
-            bool blocked = mouse.x < 0 || mouse.y < 0 || mouse.x > Screen.width || mouse.y > Screen.height || _nav.IsOverUi(mouse) || _nav.IsChangingMode;
-            var ray = _cam.ScreenPointToRay(mouse);
-            var t = space.transform;
-            var mode = _nav.Mode;
-            float clip = _nav.ViewClipHeight;
+            var (origin, direction) = _nav.PointerRay(mouse);
             Tool.Update(new MeasureInput
             {
-                RayOrigin = t.InverseTransformPoint(ray.origin).ToCore(),
-                RayDirection = t.InverseTransformDirection(ray.direction).normalized.ToCore(),
-                PixelAngle = _cam.fieldOfView * Mathf.Deg2Rad / Mathf.Max(1, Screen.height),
+                RayOrigin = origin,
+                RayDirection = direction,
+                PixelAngle = nav.Fov * Mathf.Deg2Rad / Mathf.Max(1, Screen.height),
                 AxisLock = NavInput.Key(KeyCode.LeftShift) || NavInput.Key(KeyCode.RightShift),
                 NoSnap = NavInput.Key(KeyCode.LeftAlt) || NavInput.Key(KeyCode.RightAlt),
-                PointerBlocked = blocked,
-                View = mode == MatterportNavigator.ViewMode.Inside ? MeasureView.Inside : mode == MatterportNavigator.ViewMode.Dollhouse ? MeasureView.Dollhouse : MeasureView.FloorPlan,
-                ClipHeight = float.IsPositiveInfinity(clip) ? clip : t.InverseTransformPoint(new Vector3(0, clip, 0)).y,
+                PointerBlocked = !_nav.PointerOverView(mouse) || nav.IsChangingMode,
+                View = nav.Mode,
+                ClipHeight = nav.ViewClipHeight,
             });
+            if (nav.Clicked) Tool.Click();
         }
 
         // ------------------------------------------------------------------ drawing (IMGUI, screen space)
 
         void OnGUI()
         {
-            if (!Active || Tool == null || _nav.space == null) return;
+            if (!Active || Tool == null || _nav.Core == null) return;
             GUI.depth = 1; // behind the HUD
             MpGui.Ensure();
             EnsureStyles();
-            if (Event.current.type == EventType.Repaint) DrawScene(_nav.space.transform);
+            if (Event.current.type == EventType.Repaint) DrawScene();
             DrawPanel();
         }
 
-        Color SegmentColor(MeasureDrawList.Segment s)
+        /// <summary>Draws the Core's overlay items (lines, dots, rings, labels) with IMGUI.</summary>
+        void DrawScene()
         {
-            if (s.Line >= 0 && s.Line == Tool.Selected) return Accent;
-            if (s.Line >= 0 && s.Line == Tool.Hovered) return Hover;
-            return s.Line < 0 ? AxisColor(s.Axis) : Color.white;
-        }
-
-        /// <summary>Lines being drawn with Shift take the colour of their axis.</summary>
-        static Color AxisColor(MeasureAxis axis) =>
-            axis == MeasureAxis.X ? AxisX : axis == MeasureAxis.Z ? AxisZ : axis == MeasureAxis.Vertical ? AxisVertical : Color.white;
-
-        bool Project(Transform space, Vec3 p, out Vector2 gui)
-        {
-            var sp = _cam.WorldToScreenPoint(space.TransformPoint(p.ToUnity()));
-            gui = new Vector2(sp.x, Screen.height - sp.y);
-            return sp.z > 0;
-        }
-
-        void DrawScene(Transform space)
-        {
-            var eye = space.InverseTransformPoint(_cam.transform.position).ToCore();
-            var forward = space.InverseTransformDirection(_cam.transform.forward).ToCore();
-            float near = _cam.nearClipPlane + 0.01f;
-            Tool.BuildDrawList(eye, _draw);
-
-            for (int pass = 0; pass < 2; pass++) // hidden pieces first, faded; then the visible ones
-            foreach (var s in _draw.Segments)
+            var nav = _nav.Core;
+            Tool.BuildOverlay(nav.CameraPosition, nav.CameraRotation, nav.Fov, Screen.width, Screen.height, _items);
+            foreach (var it in _items.Items)
             {
-                if (s.Occluded != (pass == 0)) continue;
-                Vec3 a = s.A, b = s.B;
-                if (!MeasureTool.ClipToFront(ref a, ref b, eye, forward, near)) continue;
-                Project(space, a, out var pa);
-                Project(space, b, out var pb);
-                var c = SegmentColor(s);
-                if (s.Occluded) c.a = 0.4f;
-                Line(pa, pb, s.Occluded ? 3f : 5f, new Color(0, 0, 0, Shadow.a * c.a));
-                Line(pa, pb, s.Occluded ? 1.5f : 3f, c);
-            }
-
-            foreach (var p in _draw.Points)
-            {
-                if (!Project(space, p.At, out var sp)) continue;
-                Dot(sp, 5.5f, Shadow);
-                Dot(sp, 4f, p.Line >= 0 && p.Line == Tool.Selected ? Accent : Color.white);
-            }
-
-            foreach (var l in _draw.Labels)
-            {
-                if (!Project(space, l.At, out var sp)) continue;
-                var style = l.Line >= 0 && l.Line == Tool.Selected ? _pillSelected : _pill;
-                var content = new GUIContent(l.Text);
-                var size = style.CalcSize(content);
-                GUI.Label(new Rect(sp.x - size.x / 2, sp.y - 11, size.x, 22), content, style);
-            }
-
-            var cursor = Tool.Cursor;
-            if (cursor.Valid && Project(space, cursor.Point, out var cp))
-            {
-                foreach (var (w, col) in new[] { (4f, Shadow), (2f, Color.white) })
+                var at = new Vector2(it.X, it.Y);
+                if (it.Kind == MeasureOverlay.Kind.Line) Line(at, new Vector2(it.X2, it.Y2), it.Size, it.Color.ToUnity());
+                else if (it.Kind != MeasureOverlay.Kind.Label) Texture(it.Kind == MeasureOverlay.Kind.Dot ? _dotTex : _ringTex, at, it.Size, it.Color.ToUnity());
+                else
                 {
-                    Line(cp - new Vector2(10, 0), cp + new Vector2(10, 0), w, col);
-                    Line(cp - new Vector2(0, 10), cp + new Vector2(0, 10), w, col);
+                    var style = it.Selected ? _pillSelected : _pill;
+                    var content = new GUIContent(it.Text);
+                    float w = style.CalcSize(content).x;
+                    GUI.Label(new Rect(at.x - w / 2, at.y - 11, w, 22), content, style);
                 }
-                if (cursor.Snap != MeasureSnap.Surface) Texture(_ringTex, cp, 10f, AxisColor(cursor.Axis));
             }
         }
 
@@ -198,8 +139,6 @@ namespace Matterportable
             GUI.matrix = matrix;
             GUI.color = tint;
         }
-
-        static void Dot(Vector2 centre, float radius, Color color) => Texture(_dotTex, centre, radius, color);
 
         static void Texture(Texture2D tex, Vector2 centre, float radius, Color color)
         {
@@ -261,14 +200,14 @@ namespace Matterportable
             _dotTex = Circle(32, 15f, 0f, Color.white);
             _ringTex = Circle(32, 15f, 12f, Color.white);
             _pillTex = Circle(20, 9.5f, 0f, new Color(1f, 1f, 1f, 0.95f));
-            _pillSelectedTex = Circle(20, 9.5f, 0f, Accent);
+            _pillSelectedTex = Circle(20, 9.5f, 0f, MeasureOverlay.Accent.ToUnity());
             _pill = new GUIStyle(GUI.skin.label)
             {
                 fontSize = 14,
                 alignment = TextAnchor.MiddleCenter,
                 padding = new RectOffset(8, 8, 2, 2),
                 border = new RectOffset(10, 10, 10, 10),
-                normal = { background = _pillTex, textColor = Ink },
+                normal = { background = _pillTex, textColor = MeasureOverlay.Ink.ToUnity() },
             };
             _pillSelected = new GUIStyle(_pill) { normal = { background = _pillSelectedTex, textColor = Color.white } };
         }

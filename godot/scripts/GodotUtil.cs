@@ -15,6 +15,9 @@ namespace Matterportable
     {
         public static Vector3 ToGodot(this Vec3 v) => new Vector3(v.X, v.Y, -v.Z);
         public static Vec3 ToCore(this Vector3 v) => new Vec3(v.X, v.Y, -v.Z);
+        /// <summary>A Core camera rotation (camera looking down +Z) as a Godot one (looking down -Z): M R M with M = mirror Z.</summary>
+        public static Quaternion ToGodot(this Quat q) => new Quaternion(-(float)q.X, -(float)q.Y, (float)q.Z, (float)q.W);
+        public static Color ToGodot(this Rgba c) => new Color(c.R, c.G, c.B, c.A);
 
         /// <summary>
         /// A sweep's WorldFromPano as a shader mat3 (Core frame), orthonormalised the way Unity's

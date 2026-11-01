@@ -1,6 +1,5 @@
 using System;
 using System.Collections;
-using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,11 +10,12 @@ using UnityEngine.Rendering;
 namespace Matterportable
 {
     /// <summary>
-    /// A Matterport space in the scene. Paste a link, press Play: the space is loaded from the cache folder
-    /// (downloaded first if needed), the mesh is built, panoramas stream in, and a <see cref="MatterportNavigator"/>
-    /// on the camera lets you walk it. In Edit mode it shows a textured preview with sweep gizmos.
-    /// Collaborators: <see cref="SpaceMesh"/> (Unity mesh), <see cref="SpaceRenderer"/> (shader state),
-    /// <see cref="PanoramaCache"/> (panorama streaming), <see cref="CalibrationRunner"/> (alignment).
+    /// A Matterport space in the scene (mirrors the Godot MatterportSpace). Paste a link, press Play: the space is
+    /// loaded from the cache folder (downloaded first if needed), the alignment solver runs once, the Core
+    /// <see cref="SpaceModel"/> loads on a worker thread, the mesh is built, and every frame the navigator's
+    /// <see cref="ViewBinding"/> goes to the shader globals (MatterportCommon.hlsl). In Edit mode it shows a textured
+    /// preview with sweep gizmos. Collaborators: <see cref="SpaceMesh"/> (Unity mesh), <see cref="PanoramaCache"/>
+    /// (panorama loading), <see cref="CalibrationRunner"/> (alignment).
     /// </summary>
     [ExecuteAlways]
     [DisallowMultipleComponent]
@@ -28,39 +28,46 @@ namespace Matterportable
         public string link = "";
         [Tooltip("Cache folder (relative to the project or absolute). Empty = <project>/MatterportCache.")]
         public string cacheFolder = "";
-        [Tooltip("Viewer settings asset. Leave empty for defaults; edits apply live in Play mode.")]
-        public MatterportViewerSettings settings;
         [Tooltip("Sweep (panorama) index to start at.")]
         public int startSweep;
         [Tooltip("Download the space automatically when entering Play mode if it is not cached yet.")]
         public bool downloadIfMissing = true;
         [Tooltip("Show the textured mesh in the Scene view while editing.")]
         public bool previewInEditMode = true;
+        [Tooltip("Adds a MeshCollider so your own gameplay code can raycast the space with Physics.")]
+        public bool addMeshCollider;
+        [Tooltip("Navigation, streaming and rendering tunables (the same in Godot and the web). Edits apply live in Play mode.")]
+        public ViewerSettings settings = new ViewerSettings();
 
-        public MatterportViewerSettings Settings => settings != null ? settings : MatterportViewerSettings.Defaults;
         public string ModelId { get; private set; }
         public string SpaceDir { get; private set; }
-        public SpaceManifest Manifest { get; private set; }
-        public SpaceCalibration Calibration { get; private set; }
-        public SpaceGeometry Geometry { get; private set; }
-        public IReadOnlyList<SweepInfo> Sweeps => _sweeps;
+        /// <summary>Sweeps, floors, bounds and ray casts in the space's local frame (also set by the Edit-mode preview).</summary>
+        public SpaceModel Model { get; private set; }
+        public PanoramaScheduler Scheduler { get; private set; }
         public PanoramaCache Panoramas { get; private set; }
         public bool IsLoaded { get; private set; }
-        public bool IsLoading { get; private set; }
         public string Status { get; private set; } = "";
         public float Progress { get; private set; }
         public string Error { get; private set; }
         public int TexturesLoaded => _mesh?.TexturesLoaded ?? 0;
         public GameObject MeshObject => _mesh?.Object;
-        public int FloorCount => _floorHeights.Count;
         public float LastLoadSeconds { get; private set; }
+        /// <summary>What the shaders show; the navigator sets it every frame.</summary>
+        public ViewBinding View { get; set; } = ViewBinding.None;
 
-        public event Action<MatterportSpace> Loaded;
+        static readonly int IdPanoA = Shader.PropertyToID("_MP_PanoA"), IdPanoB = Shader.PropertyToID("_MP_PanoB");
+        static readonly int IdDepthA = Shader.PropertyToID("_MP_DepthA"), IdDepthB = Shader.PropertyToID("_MP_DepthB");
+        static readonly int IdPosA = Shader.PropertyToID("_MP_PosA"), IdPosB = Shader.PropertyToID("_MP_PosB");
+        static readonly int IdRotA = Shader.PropertyToID("_MP_RotA"), IdRotB = Shader.PropertyToID("_MP_RotB");
+        static readonly int IdSpaceRot = Shader.PropertyToID("_MP_SpaceRot"), IdState = Shader.PropertyToID("_MP_State");
+        static readonly int IdFaceRight = Shader.PropertyToID("_MP_FaceRight"), IdFaceUp = Shader.PropertyToID("_MP_FaceUp");
+        static readonly int IdValid = Shader.PropertyToID("_MP_Valid"), IdBackground = Shader.PropertyToID("_MP_Background");
 
-        List<SweepInfo> _sweeps = new List<SweepInfo>();
-        readonly List<float> _floorHeights = new List<float>();
         SpaceMesh _mesh;
-        SpaceRenderer _renderer;
+        Texture2DArray _empty;
+        Material _skybox, _previousSkybox;
+        bool _cullBack;
+        ViewerSettings _live; // the instance the Core objects read
         CancellationTokenSource _cts;
         Coroutine _loadRoutine;
         BufferLog _log = new BufferLog();
@@ -95,7 +102,16 @@ namespace Matterportable
         void OnValidate()
         {
 #if UNITY_EDITOR
-            if (Application.isPlaying) return;
+            if (Application.isPlaying)
+            {
+                // Inspector edits reach the navigator and scheduler even if Unity replaced the settings instance.
+                if (_live != null && !ReferenceEquals(_live, settings))
+                {
+                    JsonUtility.FromJsonOverwrite(JsonUtility.ToJson(settings), _live);
+                    settings = _live;
+                }
+                return;
+            }
             UnityEditor.EditorApplication.delayCall += () =>
             {
                 if (this == null || !isActiveAndEnabled || Application.isPlaying) return;
@@ -107,13 +123,15 @@ namespace Matterportable
 
         void Update()
         {
-            if (Application.isPlaying && IsLoaded) Panoramas?.Update();
+            if (!Application.isPlaying || !IsLoaded) return;
+            Scheduler.Update(Time.unscaledDeltaTime);
+            Panoramas.Update();
         }
 
         // After the navigator's Update, so the shaders always match this frame's camera.
         void LateUpdate()
         {
-            if (Application.isPlaying && IsLoaded) _renderer?.Apply(this);
+            if (Application.isPlaying && IsLoaded) ApplyView();
         }
 
         /// <summary>Reloads the space from the cache (downloading it if needed and allowed).</summary>
@@ -134,28 +152,27 @@ namespace Matterportable
         void Unload()
         {
             IsLoaded = false;
-            IsLoading = false;
             Panoramas?.Dispose();
             Panoramas = null;
+            Scheduler = null;
+            Model = null;
+            View = ViewBinding.None;
             _mesh?.Dispose();
             _mesh = null;
-            _renderer?.Dispose();
-            _renderer = null;
-            _sweeps = new List<SweepInfo>();
-            _floorHeights.Clear();
-            Geometry = null;
+            _cullBack = false;
+            if (_skybox != null && RenderSettings.skybox == _skybox) RenderSettings.skybox = _previousSkybox;
+            MpUtil.SafeDestroy(_skybox);
+            MpUtil.SafeDestroy(_empty);
         }
 
         // ------------------------------------------------------------------ loading (Play mode)
 
         IEnumerator LoadRoutine(CancellationToken ct)
         {
-            IsLoading = true;
             Error = null;
-            _log = new BufferLog { Forward = UnityLog.For(Settings) };
+            _log = new BufferLog { Forward = UnityLog.For(settings.VerboseLogging) };
             float started = Time.realtimeSinceStartup;
             SetStatus("Resolving link", 0f);
-
             if (!MatterportLink.TryParseModelId(link, out var modelId))
             {
                 Fail(string.IsNullOrWhiteSpace(link) ? "No Matterport link set on the MatterportSpace component." : $"Not a Matterport link: {link}");
@@ -169,13 +186,13 @@ namespace Matterportable
             {
                 if (!downloadIfMissing)
                 {
-                    Fail($"Space {modelId} is not downloaded ({SpaceDir}). Use Window > Matterportable > Import Space.");
+                    Fail($"Space {modelId} is not downloaded ({SpaceDir}). Open it from the in-game menu, or use the inspector's Download button.");
                     yield break;
                 }
                 using (var http = new HttpClientTransport())
                 {
                     var downloader = new SpaceDownloader(http, _log);
-                    var task = downloader.DownloadAsync(modelId, SpaceDir, new DownloadOptions { PanoSizes = new[] { 512, Settings.panoMaxSize } }, ct);
+                    var task = downloader.DownloadAsync(modelId, SpaceDir, new DownloadOptions { PanoSizes = new[] { 512, settings.PanoMaxSize } }, ct);
                     while (!task.IsCompleted)
                     {
                         SetStatus("Downloading: " + downloader.Status, 0.05f + 0.5f * downloader.Status.Fraction);
@@ -187,19 +204,20 @@ namespace Matterportable
             }
 
             // 2) Manifest and calibration (the solver runs once per space; failures are not retried automatically).
+            SpaceManifest manifest;
+            SpaceCalibration cal;
             try
             {
-                Manifest = SpaceManifest.Load(SpaceDir);
-                Calibration = SpaceCalibration.LoadOrDefault(SpaceDir);
+                manifest = SpaceManifest.Load(SpaceDir);
+                cal = SpaceCalibration.LoadOrDefault(SpaceDir);
             }
             catch (Exception e)
             {
                 Fail("Could not read the cached space: " + e.Message);
                 yield break;
             }
-            if (Manifest.Sweeps.Count == 0) { Fail("The cached space has no panoramas."); yield break; }
-
-            if (Calibration.NeedsSolve && Manifest.Mesh != null)
+            if (manifest.Sweeps.Count == 0) { Fail("The cached space has no panoramas."); yield break; }
+            if (cal.NeedsSolve && manifest.Mesh != null)
             {
                 SetStatus("Aligning panoramas (first load only)", 0.55f);
                 yield return null;
@@ -210,98 +228,39 @@ namespace Matterportable
                 {
                     while (!solve.IsCompleted) yield return null;
                     if (solve.IsFaulted) _log.Warn("Panorama alignment failed: " + Unwrap(solve.Exception));
-                    else if (!solve.IsCanceled) Calibration = solve.Result;
+                    else if (!solve.IsCanceled) cal = solve.Result;
                 }
             }
 
-            // 3) Geometry on a worker thread (reused from the previous Play session when nothing changed).
+            // 3) The model on a worker thread (reused from the previous Play session when nothing changed).
             SetStatus("Building geometry", 0.65f);
-            var manifest = Manifest;
-            var cal = Calibration;
-            var dir = SpaceDir;
+            string dir = SpaceDir;
             var log = _log;
-            var geoTask = Task.Run(() => LoadGeometry(dir, manifest, cal, log), ct);
-            while (!geoTask.IsCompleted) yield return null;
-            if (geoTask.IsCanceled) yield break;
-            if (geoTask.IsFaulted) { Fail("Could not build the mesh: " + Unwrap(geoTask.Exception)); yield break; }
-            (Geometry, _sweeps) = geoTask.Result;
-            ComputeFloorHeights();
+            var load = Task.Run(() => SpaceModel.Load(dir, manifest, cal, log), ct);
+            while (!load.IsCompleted) yield return null;
+            if (load.IsCanceled) yield break;
+            if (load.IsFaulted) { Fail("Could not build the mesh: " + Unwrap(load.Exception)); yield break; }
 
             // 4) Unity objects.
             SetStatus("Creating meshes", 0.75f);
             try
             {
-                if (Geometry != null) _mesh = SpaceMesh.Create(Geometry, transform, "Matterport " + Manifest.Name, true, Settings.addMeshCollider);
+                Model = load.Result;
+                if (Model.Geometry != null) _mesh = SpaceMesh.Create(Model.Geometry, transform, "Matterport " + manifest.Name, true, addMeshCollider);
+                CreateShaderState();
+                Panoramas = new PanoramaCache(this);
+                Scheduler = Panoramas.Scheduler = new PanoramaScheduler(Model.Sweeps, _live = settings, Panoramas, Model.Geometry != null);
             }
             catch (Exception e) { Fail(e.Message); yield break; }
-            _renderer = new SpaceRenderer(installSkybox: true);
-            SpaceRenderer.SetLayout(Calibration, _log);
-            Panoramas = new PanoramaCache(this) { IsPinned = s => s == _renderer.ViewA || s == _renderer.ViewB };
-            startSweep = Mathf.Clamp(startSweep, 0, _sweeps.Count - 1);
-            Panoramas.RequestProgressive(startSweep, Settings.panoMaxSize, 0f);
-            Panoramas.RequestDepth(startSweep);
-
-            IsLoading = false;
             IsLoaded = true;
             LastLoadSeconds = Time.realtimeSinceStartup - started;
-            SetStatus($"Loaded \"{Manifest.Name}\" ({_sweeps.Count} sweeps) in {LastLoadSeconds:0.0}s", 1f);
+            SetStatus($"Loaded \"{manifest.Name}\" ({Model.Sweeps.Count} sweeps) in {LastLoadSeconds:0.0}s", 1f);
             _log.Info(Status);
-            foreach (var w in Manifest.Warnings) _log.Info("Download note: " + w);
+            foreach (var w in manifest.Warnings) _log.Info("Download note: " + w);
             WriteLoadLog();
-            Loaded?.Invoke(this);
 
             // 5) Mesh textures stream in afterwards (they matter for dollhouse view and occluded areas).
-            if (_mesh != null) yield return _mesh.LoadTexturesRoutine(Manifest, SpaceDir);
-        }
-
-        static readonly object GeometryCacheLock = new object();
-        static (string key, SpaceGeometry geometry, List<SweepInfo> sweeps) _geometryCache;
-
-        /// <summary>
-        /// Decodes the mesh, builds the BVH and sweeps. The last result stays in memory: with fast Enter Play Mode
-        /// (no domain reload) the next Play skips this step entirely unless the mesh or calibration changed.
-        /// </summary>
-        static (SpaceGeometry, List<SweepInfo>) LoadGeometry(string dir, SpaceManifest manifest, SpaceCalibration cal, ILogSink log)
-        {
-            var meshPath = manifest.Mesh != null ? CacheLayout.Resolve(dir, manifest.Mesh.File) : null;
-            var key = string.Join("|", dir, meshPath != null ? File.GetLastWriteTimeUtc(meshPath).Ticks : 0, manifest.Sweeps.Count, cal.ToJson().ToJson(false));
-            lock (GeometryCacheLock)
-                if (_geometryCache.key == key) return (_geometryCache.geometry, _geometryCache.sweeps);
-
-            SpaceGeometry geo = null;
-            if (meshPath != null)
-            {
-                var bytes = File.ReadAllBytes(meshPath);
-                var mesh = DamDecoder.Decode(bytes, log);
-                if (!mesh.HasUvs) DamDecoder.WriteDiagnostics(dir, bytes);
-                geo = SpaceGeometry.Build(mesh, cal);
-            }
-            var sweeps = SweepBuilder.Build(manifest, cal, geo, log);
-            lock (GeometryCacheLock) _geometryCache = (key, geo, sweeps);
-            return (geo, sweeps);
-        }
-
-        void ComputeFloorHeights()
-        {
-            _floorHeights.Clear();
-            int floors = 0;
-            foreach (var s in _sweeps) floors = Mathf.Max(floors, s.Floor + 1);
-            for (int f = 0; f < floors; f++)
-            {
-                var ys = new List<float>();
-                foreach (var s in _sweeps) if (s.Floor == f) ys.Add(s.FloorPoint.Y);
-                ys.Sort();
-                _floorHeights.Add(ys.Count > 0 ? ys[ys.Count / 2] : (f > 0 ? _floorHeights[f - 1] + 3f : 0f));
-            }
-        }
-
-        /// <summary>Replaces the calibration at runtime (inspector tweaks), recomputing sweep rotations.</summary>
-        public void SetCalibration(SpaceCalibration cal, bool save)
-        {
-            Calibration = cal;
-            foreach (var s in _sweeps) s.WorldFromPano = cal.WorldFromPano(s.Entry.Rotation);
-            SpaceRenderer.SetLayout(cal, _log);
-            if (save && !string.IsNullOrEmpty(SpaceDir)) cal.Save(SpaceDir);
+            if (_mesh != null) yield return _mesh.LoadTexturesRoutine(manifest, SpaceDir);
         }
 
         void SetStatus(string s, float progress)
@@ -313,7 +272,6 @@ namespace Matterportable
         void Fail(string message)
         {
             Error = message;
-            IsLoading = false;
             SetStatus(message, 0f);
             _log.Error(message);
             WriteLoadLog();
@@ -336,106 +294,66 @@ namespace Matterportable
             return e?.Message ?? "unknown error";
         }
 
-        // ------------------------------------------------------------------ view state (called by the navigator)
+        // ------------------------------------------------------------------ shader state (the only writer of the globals)
 
-        /// <summary>
-        /// Sets what the shaders show: panorama A, optionally blending to B, how much projection vs. mesh texture,
-        /// and a world-space clip height (floors above are hidden in dollhouse/floor plan).
-        /// </summary>
-        public void SetView(int sweepA, int sweepB, float blend, float projection, float clipHeightWorld = float.PositiveInfinity)
+        void CreateShaderState()
         {
-            if (_renderer == null) return;
-            _renderer.ViewA = sweepA;
-            _renderer.ViewB = sweepB;
-            _renderer.Blend = Mathf.Clamp01(blend);
-            _renderer.Projection = Mathf.Clamp01(projection);
-            _renderer.ClipHeight = clipHeightWorld;
-            Panoramas?.Touch(sweepA);
-            Panoramas?.Touch(sweepB);
-        }
-
-        public void SetCullMode(CullMode mode) => _mesh?.SetCullMode(mode);
-
-        /// <summary>Render debug view (0 final … see <see cref="DebugViewName"/>).</summary>
-        public int DebugView
-        {
-            get => _renderer?.DebugView ?? 0;
-            set { if (_renderer != null) _renderer.DebugView = value; }
-        }
-
-        public string DebugViewName => SpaceRenderer.DebugViewNames[DebugView];
-
-        /// <summary>Names of the render debug views, in <see cref="DebugView"/> order.</summary>
-        public static string[] DebugViewNames => (string[])SpaceRenderer.DebugViewNames.Clone();
-
-        // ------------------------------------------------------------------ queries
-
-        public Vector3 SweepWorldPosition(int i) => transform.TransformPoint(_sweeps[i].Position.ToUnity());
-        public Vector3 MarkerWorldPosition(int i) => transform.TransformPoint(_sweeps[i].FloorPoint.ToUnity());
-
-        /// <summary>Panorama-local → world rotation of a sweep.</summary>
-        public Quaternion SweepWorldRotation(int i) => transform.rotation * _sweeps[i].WorldFromPano.ToQuaternion();
-
-        public Matrix4x4 WorldToPano(int i) => Matrix4x4.Rotate(Quaternion.Inverse(SweepWorldRotation(i)));
-
-        public float FloorHeightWorld(int floor) =>
-            floor >= 0 && floor < _floorHeights.Count ? transform.TransformPoint(new Vector3(0, _floorHeights[floor], 0)).y : 0f;
-
-        /// <summary>Raycasts the scanned mesh (no physics needed). Returns world-space point and normal.</summary>
-        public bool Raycast(Ray worldRay, float maxDistance, out Vector3 point, out Vector3 normal, out float distance)
-        {
-            point = normal = Vector3.zero;
-            distance = 0;
-            if (Geometry == null) return false;
-            var o = transform.InverseTransformPoint(worldRay.origin).ToCore();
-            var d = transform.InverseTransformDirection(worldRay.direction).normalized.ToCore();
-            if (!Geometry.Bvh.Raycast(o, d, maxDistance, out var hit)) return false;
-            point = transform.TransformPoint(hit.Point.ToUnity());
-            normal = transform.TransformDirection(hit.Normal.ToUnity());
-            distance = hit.Distance;
-            return true;
-        }
-
-        /// <summary>Raycast that ignores everything above a world-space clip height (dollhouse floor filtering).</summary>
-        public bool RaycastBelow(Ray worldRay, float maxDistance, float clipHeightWorld, out Vector3 point, out Vector3 normal)
-        {
-            point = normal = Vector3.zero;
-            var ray = worldRay;
-            float travelled = 0;
-            for (int i = 0; i < 8; i++)
+            _empty = new Texture2DArray(1, 1, 6, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave, name = "Matterport empty pano" };
+            for (int i = 0; i < 6; i++) _empty.SetPixels32(new[] { new Color32(128, 128, 128, 255) }, i);
+            _empty.Apply(false, true);
+            var sky = Shader.Find("Matterportable/Skybox");
+            if (sky != null)
             {
-                if (!Raycast(ray, maxDistance - travelled, out point, out normal, out float dist)) return false;
-                if (point.y <= clipHeightWorld) return true;
-                travelled += dist + 0.01f;
-                ray = new Ray(point + ray.direction * 0.01f, ray.direction);
+                _skybox = new Material(sky) { hideFlags = HideFlags.DontSave, name = "Matterport Skybox" };
+                _previousSkybox = RenderSettings.skybox;
+                RenderSettings.skybox = _skybox;
             }
-            return false;
-        }
-
-        public bool LineOfSight(Vector3 fromWorld, Vector3 toWorld)
-        {
-            if (Geometry == null) return true;
-            return !Geometry.Bvh.Occluded(transform.InverseTransformPoint(fromWorld).ToCore(), transform.InverseTransformPoint(toWorld).ToCore(), 0.1f);
-        }
-
-        public Bounds WorldBounds
-        {
-            get
+            // Panorama face layout (from calibration).
+            if (!CubeFaces.TryBuildLookup(Model.Calibration.Faces, out var slice, out var right, out var up))
             {
-                if (Geometry == null)
-                {
-                    var bb = new Bounds(transform.position, Vector3.one);
-                    for (int i = 0; i < _sweeps.Count; i++) bb.Encapsulate(SweepWorldPosition(i));
-                    return bb;
-                }
-                var mn = Geometry.BoundsMin.ToUnity();
-                var mx = Geometry.BoundsMax.ToUnity();
-                var b = new Bounds(transform.TransformPoint(mn), Vector3.zero);
-                for (int i = 1; i < 8; i++)
-                    b.Encapsulate(transform.TransformPoint(new Vector3((i & 1) == 0 ? mn.x : mx.x, (i & 2) == 0 ? mn.y : mx.y, (i & 4) == 0 ? mn.z : mx.z)));
-                return b;
+                _log.Warn("Invalid panorama face layout; using the default.");
+                CubeFaces.TryBuildLookup(CubeFaces.DefaultMatterportLayout(), out slice, out right, out up);
             }
+            var r = new Vector4[6];
+            var u = new Vector4[6];
+            for (int c = 0; c < 6; c++)
+            {
+                r[c] = new Vector4(right[c].X, right[c].Y, right[c].Z, slice[c]);
+                u[c] = new Vector4(up[c].X, up[c].Y, up[c].Z, 0);
+            }
+            Shader.SetGlobalVectorArray(IdFaceRight, r);
+            Shader.SetGlobalVectorArray(IdFaceUp, u);
         }
+
+        /// <summary>Binds the navigator's view: the photos and depth cubes of the chosen sweeps, their poses, the state,
+        /// back-face culling (dollhouse and floor plan show the inside of the walls).</summary>
+        void ApplyView()
+        {
+            var v = View;
+            var t = transform;
+            Shader.SetGlobalTexture(IdPanoA, Or(Panoramas.Faces(v.PanoA)));
+            Shader.SetGlobalTexture(IdPanoB, Or(Panoramas.Faces(v.PanoB)));
+            Shader.SetGlobalTexture(IdDepthA, Or(Panoramas.Depth(v.DepthA)));
+            Shader.SetGlobalTexture(IdDepthB, Or(Panoramas.Depth(v.DepthB)));
+            Shader.SetGlobalVector(IdPosA, SweepWorldPosition(v.PoseA));
+            Shader.SetGlobalVector(IdPosB, SweepWorldPosition(v.PoseB));
+            Shader.SetGlobalMatrix(IdRotA, WorldToPano(v.PoseA));
+            Shader.SetGlobalMatrix(IdRotB, WorldToPano(v.PoseB));
+            Shader.SetGlobalMatrix(IdSpaceRot, Matrix4x4.Rotate(Quaternion.Inverse(t.rotation)));
+            Shader.SetGlobalVector(IdState, new Vector4(v.Blend, v.Projection, v.UseDepth ? 1f : 0f, v.DebugView));
+            float clip = v.ClipHeight >= 1e9f ? v.ClipHeight : t.TransformPoint(new Vector3(0, v.ClipHeight, 0)).y; // the shader clips world y
+            Shader.SetGlobalVector(IdValid, new Vector4(v.ValidA ? 1f : 0f, v.ValidB ? 1f : 0f, clip, 0f));
+            Shader.SetGlobalColor(IdBackground, settings.BackgroundColor.ToUnity());
+            if (v.CullBack == _cullBack) return;
+            _cullBack = v.CullBack;
+            _mesh?.SetCullMode(_cullBack ? CullMode.Back : CullMode.Off);
+        }
+
+        Texture Or(Texture t) => t != null ? t : _empty;
+
+        public Vector3 SweepWorldPosition(int i) => transform.TransformPoint(Model.Sweeps[i].Position.ToUnity());
+
+        Matrix4x4 WorldToPano(int i) => Matrix4x4.Rotate(Quaternion.Inverse(transform.rotation * Model.Sweeps[i].WorldFromPano.ToQuaternion()));
 
         // ------------------------------------------------------------------ edit-mode preview
 
@@ -460,17 +378,16 @@ namespace Matterportable
             }
             try
             {
-                Manifest = SpaceManifest.Load(SpaceDir);
-                Calibration = SpaceCalibration.LoadOrDefault(SpaceDir);
-                (Geometry, _sweeps) = LoadGeometry(SpaceDir, Manifest, Calibration, null);
-                ComputeFloorHeights();
-                if (Geometry != null)
+                var manifest = SpaceManifest.Load(SpaceDir);
+                Model = SpaceModel.Load(SpaceDir, manifest, SpaceCalibration.LoadOrDefault(SpaceDir), null);
+                if (Model.Geometry != null)
                 {
-                    _mesh = SpaceMesh.Create(Geometry, transform, "Matterport " + Manifest.Name, false, false);
-                    _mesh.LoadTexturesNow(Manifest, SpaceDir);
+                    _mesh = SpaceMesh.Create(Model.Geometry, transform, "Matterport " + manifest.Name, false, false);
+                    _mesh.LoadTexturesNow(manifest, SpaceDir);
                 }
-                SpaceRenderer.ShowMeshTexturesOnly();
-                Status = $"{Manifest.Name}: {_sweeps.Count} sweeps" + (Geometry != null ? $", {Geometry.TriangleCount:N0} triangles" : ", no mesh");
+                Shader.SetGlobalVector(IdState, Vector4.zero); // plain mesh textures, nothing clipped
+                Shader.SetGlobalVector(IdValid, new Vector4(0, 0, 1e9f, 0));
+                Status = $"{manifest.Name}: {Model.Sweeps.Count} sweeps" + (Model.Geometry != null ? $", {Model.Geometry.TriangleCount:N0} triangles" : ", no mesh");
             }
             catch (Exception e)
             {
@@ -481,13 +398,13 @@ namespace Matterportable
 
         void OnDrawGizmos()
         {
-            if (_sweeps.Count == 0 || Application.isPlaying) return;
+            if (Model == null || Application.isPlaying) return;
             Gizmos.color = new Color(0.2f, 0.8f, 1f, 0.9f);
-            for (int i = 0; i < _sweeps.Count; i++)
+            for (int i = 0; i < Model.Sweeps.Count; i++)
             {
                 var p = SweepWorldPosition(i);
                 Gizmos.DrawSphere(p, 0.08f);
-                Gizmos.DrawLine(p, MarkerWorldPosition(i));
+                Gizmos.DrawLine(p, transform.TransformPoint(Model.Sweeps[i].FloorPoint.ToUnity()));
             }
         }
     }

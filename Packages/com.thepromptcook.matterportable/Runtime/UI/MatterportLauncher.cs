@@ -18,8 +18,8 @@ namespace Matterportable
     {
         const string LastLinkKey = "Matterportable.LastLink";
 
-        [Tooltip("Optional settings applied to spaces opened from the menu.")]
-        public MatterportViewerSettings settings;
+        [Tooltip("Settings for spaces opened from the menu.")]
+        public ViewerSettings settings = new ViewerSettings();
         [Tooltip("Link pre-filled the first time (later the last link you opened is remembered).")]
         public string defaultLink = "https://discover.matterport.com/space/rGMMnZDh3Tf";
 

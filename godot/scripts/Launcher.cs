@@ -28,7 +28,7 @@ namespace Matterportable
         string _screenshot, _compare;
         int _compareSweeps = 6;
         string _mode;
-        int _view, _goto = -1;
+        int _view = -1, _goto = -1;
         int _screenshotFrames = -1;
 
         public override void _Ready()
@@ -139,8 +139,7 @@ namespace Matterportable
             _measure = new MatterportMeasure { Name = "Measure", Space = _space, Navigator = _nav };
             _hud = new Hud { Space = _space, Navigator = _nav, Measure = _measure };
             _hud.MenuRequested += ShowMenu;
-            _space.Loaded += s => s.DebugView = _view;
-            _nav.StartMode = _mode == "dollhouse" ? MatterportNavigator.ViewMode.Dollhouse : _mode == "floorplan" ? MatterportNavigator.ViewMode.Floorplan : MatterportNavigator.ViewMode.Inside;
+            _nav.StartMode = _mode == "dollhouse" ? ViewMode.Dollhouse : _mode == "floorplan" ? ViewMode.Floorplan : ViewMode.Inside;
             AddChild(_space);
             AddChild(_nav);
             AddChild(_measure);
@@ -207,31 +206,28 @@ namespace Matterportable
             _measure.Visible = false;
             _space.Settings.ShowReticle = false;
             var info = new System.Text.StringBuilder();
-            info.AppendLine($"space {_space.ModelId} \"{_space.Manifest.Name}\" sweeps {_space.Sweeps.Count} fov {_space.Settings.DefaultFov} calibration {_space.Calibration.Method} score {_space.Calibration.Score:0.00}");
-            int n = Math.Max(1, Math.Min(_compareSweeps, _space.Sweeps.Count));
+            var model = _space.Model;
+            info.AppendLine($"space {_space.ModelId} \"{model.Manifest.Name}\" sweeps {model.Sweeps.Count} fov {_space.Settings.DefaultFov} calibration {model.Calibration.Method} score {model.Calibration.Score:0.00}");
+            int n = Math.Max(1, Math.Min(_compareSweeps, model.Sweeps.Count));
             for (int k = 0; k < n; k++)
             {
-                int sweep = (int)((k + 0.5f) * _space.Sweeps.Count / n);
-                _nav.Teleport(sweep, 0f, -10f);
+                int sweep = (int)((k + 0.5f) * model.Sweeps.Count / n);
+                _nav.Core.Teleport(sweep, 0f, 10f);
                 // Wait for the full-size photo (or 10 s) and all mesh textures.
-                for (int f = 0; f < 600; f++)
-                {
-                    var e = _space.Panoramas.Get(sweep);
-                    var largest = _space.Manifest.Sweeps[sweep].TierAtMost(_space.Settings.PanoMaxSize);
-                    if (e?.Faces != null && (largest == null || e.Size >= largest.Size) && _space.TexturesLoaded >= _space.Manifest.Textures.Count) break;
+                var largest = model.Sweeps[sweep].Entry.TierAtMost(_space.Settings.PanoMaxSize);
+                for (int f = 0; f < 600 && (_space.Scheduler.Size(sweep) < (largest?.Size ?? 0) || _space.TexturesLoaded < model.Manifest.Textures.Count); f++)
                     await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
-                }
                 foreach (int yaw in new[] { 0, 90, 180, 270 })
                 {
-                    _nav.Teleport(sweep, yaw, -10f);
+                    _nav.Core.Teleport(sweep, yaw, 10f);
                     foreach (var (view, name) in new[] { (1, "mesh"), (2, "pano") })
                     {
-                        _space.DebugView = view;
+                        _nav.Core.DebugView = view;
                         for (int f = 0; f < 3; f++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
                         GetViewport().GetTexture().GetImage().SavePng(System.IO.Path.Combine(dir, $"s{sweep:D3}_y{yaw:D3}_{name}.png"));
                     }
                 }
-                info.AppendLine($"sweep {sweep} id {_space.Sweeps[sweep].Id} pano {_space.Panoramas.Get(sweep)?.Size}px");
+                info.AppendLine($"sweep {sweep} id {model.Sweeps[sweep].Id} pano {_space.Scheduler.Size(sweep)}px");
             }
             System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "compare.txt"), info.ToString());
             GD.Print($"[Matterportable] compare: {n} sweeps saved to {dir}");
@@ -245,7 +241,9 @@ namespace Matterportable
 
         public override void _Process(double delta)
         {
-            if (_compare != null && _space != null && _space.IsLoaded && _nav.CurrentSweep >= 0)
+            var nav = _nav?.Core;
+            if (nav != null && _view >= 0) { nav.DebugView = _view; _view = -1; }
+            if (_compare != null && nav != null && nav.CurrentSweep >= 0)
             {
                 var dir = _compare;
                 _compare = null;
@@ -254,24 +252,25 @@ namespace Matterportable
             if (_screenshot == null || _space == null) return;
             if (_space.Error != null) { GD.PrintErr("[Matterportable] " + _space.Error); GetTree().Quit(1); return; }
             // Wait for the space, its panoramas and the mode animation to settle, then save the frame and quit.
-            if (_goto >= 0 && _space.IsLoaded && _nav.CurrentSweep >= 0 && !_nav.IsChangingMode)
+            if (nav == null) return;
+            if (_goto >= 0 && nav.CurrentSweep >= 0 && !nav.IsChangingMode)
             {
-                _nav.GoTo(_goto);
+                nav.GoTo(_goto);
                 _goto = -1;
                 return;
             }
-            if (_measureStep >= 0 && _space.IsLoaded && _nav.CurrentSweep >= 0 && !_nav.IsChangingMode && _space.Panoramas.ActiveLoads == 0)
+            if (_measureStep >= 0 && nav.CurrentSweep >= 0 && !nav.IsChangingMode && _space.Scheduler.ActiveLoads == 0)
             {
                 MeasureDemo();
                 return;
             }
-            if (_screenshotFrames < 0 && _space.IsLoaded && !_nav.IsMoving && !_nav.IsWaitingForPanorama && _goto < 0 && _space.Panoramas.ActiveLoads == 0 && _space.Panoramas.Queued == 0 && !_nav.IsChangingMode && _space.TexturesLoaded >= _space.Manifest.Textures.Count)
+            if (_screenshotFrames < 0 && !nav.IsMoving && !nav.IsWaitingForPanorama && _goto < 0 && _space.Scheduler.ActiveLoads == 0 && _space.Scheduler.Queued == 0 && !nav.IsChangingMode && _space.TexturesLoaded >= _space.Model.Manifest.Textures.Count)
                 _screenshotFrames = 30;
             if (_screenshotFrames > 0 && --_screenshotFrames == 0)
             {
                 var err = GetViewport().GetTexture().GetImage().SavePng(_screenshot);
                 var measured = _measure.Tool == null ? "" : $"; {_measure.Tool.Lines.Count} measurement(s), drawing {(_measure.Tool.Draft != null ? "yes" : "no")}, menu {(_menu.Visible ? "open" : "closed")}";
-                GD.Print($"[Matterportable] {_space.Status}; mode {_nav.Mode}, sweep {_nav.CurrentSweep}{measured}; screenshot {(err == Error.Ok ? "saved" : "failed: " + err)}");
+                GD.Print($"[Matterportable] {_space.Status}; mode {nav.Mode}, sweep {nav.CurrentSweep}{measured}; screenshot {(err == Error.Ok ? "saved" : "failed: " + err)}");
                 GetTree().Quit(err == Error.Ok ? 0 : 1);
             }
         }

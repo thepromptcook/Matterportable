@@ -67,13 +67,13 @@ namespace Matterportable.Tests
                 space.BuildEditorPreview();
                 Assert.IsNull(space.Error, space.Error);
                 Assert.IsNotNull(space.MeshObject);
-                Assert.AreEqual(synth.Manifest.Sweeps.Count, space.Sweeps.Count);
+                Assert.AreEqual(synth.Manifest.Sweeps.Count, space.Model.Sweeps.Count);
                 Assert.AreEqual(synth.Geometry.Parts.Count, space.MeshObject.GetComponent<MeshFilter>().sharedMesh.subMeshCount);
                 // Sweep positions survive the round trip through files and frame conversion.
                 Assert.Less((space.SweepWorldPosition(0) - new Vector3(1.2f, 1.55f, 1.2f)).magnitude, 1e-3f);
-                Assert.IsTrue(space.Raycast(new Ray(space.SweepWorldPosition(0), Vector3.down), 5f, out var p, out var n, out _));
-                Assert.AreEqual(0f, p.y, 1e-3f);
-                Assert.Greater(n.y, 0.9f, "floors must face up after conversion");
+                Assert.IsTrue(space.Model.Raycast(space.SweepWorldPosition(0).ToCore(), -Vec3.Up, 5f, out var hit));
+                Assert.AreEqual(0f, hit.Point.Y, 1e-3f);
+                Assert.Greater(hit.Normal.Y, 0.9f, "floors must face up after conversion");
             }
             finally
             {

@@ -284,6 +284,28 @@ namespace Matterportable.Core
         public bool Raycast(Vec3 origin, Vec3 direction, float maxDistance, out RayHit hit) =>
             Trace(origin, direction, maxDistance, false, out hit);
 
+        /// <summary>
+        /// First surface the user can see along the ray: with <paramref name="cullBack"/> (dollhouse, floor plan) back
+        /// faces are skipped (you look into rooms through their walls), and geometry above the clip height is hidden.
+        /// </summary>
+        public bool RaycastVisible(Vec3 origin, Vec3 dir, float maxDistance, bool cullBack, float clipHeight, out RayHit hit)
+        {
+            float travelled = 0;
+            for (int i = 0; i < 16 && travelled < maxDistance; i++)
+            {
+                if (!Raycast(origin, dir, maxDistance - travelled, out hit)) return false;
+                if ((!cullBack || Vec3.Dot(hit.Normal, dir) < 0) && hit.Point.Y <= clipHeight)
+                {
+                    hit.Distance += travelled;
+                    return true;
+                }
+                travelled += hit.Distance + 0.01f;
+                origin = hit.Point + dir * 0.01f;
+            }
+            hit = default;
+            return false;
+        }
+
         /// <summary>True if anything lies strictly between a and b (with a small margin at both ends).</summary>
         public bool Occluded(Vec3 a, Vec3 b, float margin = 0.05f)
         {

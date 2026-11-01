@@ -20,7 +20,7 @@ export class SweepMarkers {
 
   /** A circle lying on a surface with the given normal. color = [r, g, b, a]. */
   draw(position, normal, radius, color, inner = 0.72, fill = 0.22) {
-    if (radius <= 0 || color[3] <= 0.001) return;
+    if (this.hidden || radius <= 0 || color[3] <= 0.001) return;
     if (this.used === this.pool.length) {
       const material = new THREE.ShaderMaterial({
         vertexShader: vertex, fragmentShader: markerFragment, glslVersion: THREE.GLSL3,

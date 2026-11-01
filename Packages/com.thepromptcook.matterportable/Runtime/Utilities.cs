@@ -9,6 +9,9 @@ namespace Matterportable
     {
         public static Vector3 ToUnity(this Vec3 v) => new Vector3(v.X, v.Y, v.Z);
         public static Vec3 ToCore(this Vector3 v) => new Vec3(v.x, v.y, v.z);
+        /// <summary>The Core frame is Unity's, so rotations carry over as they are.</summary>
+        public static Quaternion ToUnity(this Quat q) => new Quaternion((float)q.X, (float)q.Y, (float)q.Z, (float)q.W);
+        public static Color ToUnity(this Rgba c) => new Color(c.R, c.G, c.B, c.A);
 
         public static Quaternion ToQuaternion(this Mat3 m) =>
             Quaternion.LookRotation(m.Column(2).ToUnity(), m.Column(1).ToUnity());
@@ -19,15 +22,14 @@ namespace Matterportable
 
     /// <summary>
     /// Forwards Core log messages to the Unity console (thread-safe). Info messages only appear with
-    /// <see cref="MatterportViewerSettings.verboseLogging"/>; every load also writes them to debug/load.log.
+    /// <see cref="ViewerSettings.VerboseLogging"/>; every load also writes them to debug/load.log.
     /// </summary>
     public sealed class UnityLog : ILogSink
     {
         public static readonly UnityLog All = new UnityLog(true);
         public static readonly UnityLog WarningsOnly = new UnityLog(false);
 
-        public static UnityLog For(MatterportViewerSettings settings) =>
-            settings != null && settings.verboseLogging ? All : WarningsOnly;
+        public static UnityLog For(bool verbose) => verbose ? All : WarningsOnly;
 
         readonly bool _verbose;
 

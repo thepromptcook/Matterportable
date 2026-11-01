@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 namespace Matterportable.Core
 {
     public enum MeasureUnits { Imperial, Metric }
-    public enum MeasureView { Inside, Dollhouse, FloorPlan }
 
     /// <summary>What the measurement cursor attached to.</summary>
     public enum MeasureSnap { None, Surface, Edge, Corner, Point, Axis }
@@ -52,7 +51,7 @@ namespace Matterportable.Core
         public bool NoSnap;
         /// <summary>The pointer is over UI or outside the view: no cursor.</summary>
         public bool PointerBlocked;
-        public MeasureView View;
+        public ViewMode View;
         /// <summary>Geometry above this height is hidden (dollhouse floor filter); +infinity for none.</summary>
         public float ClipHeight;
     }
@@ -75,6 +74,28 @@ namespace Matterportable.Core
         public readonly List<Segment> Segments = new List<Segment>();
         public readonly List<Label> Labels = new List<Label>();
         public readonly List<Point> Points = new List<Point>();
+    }
+
+    /// <summary>The measure overlay in screen pixels (y down), in drawing order (<see cref="MeasureTool.BuildOverlay"/>).
+    /// Engines only draw the items.</summary>
+    public sealed class MeasureOverlay
+    {
+        public enum Kind { Line, Dot, Ring, Label }
+
+        /// <summary>Line: (X, Y) to (X2, Y2), Size = width. Dot (filled) and Ring (2 px outline): centre (X, Y), Size =
+        /// radius. Label: a rounded pill centred on (X, Y) - white with <see cref="Ink"/> text, or <see cref="Accent"/>
+        /// with white text when Selected.</summary>
+        public struct Item
+        {
+            public Kind Kind;
+            public float X, Y, X2, Y2, Size;
+            public Rgba Color;
+            public string Text;
+            public bool Selected;
+        }
+
+        public static readonly Rgba White = new Rgba(1f, 1f, 1f, 1f), Ink = new Rgba(0.1f, 0.1f, 0.12f, 1f), Accent = new Rgba(0.18f, 0.45f, 0.85f, 1f);
+        public readonly List<Item> Items = new List<Item>();
     }
 
     /// <summary>
@@ -102,7 +123,7 @@ namespace Matterportable.Core
 
         readonly Bvh _bvh;
         readonly Task<MeshFeatures> _features;
-        MeasureView _view;
+        ViewMode _view;
         float _clip = float.PositiveInfinity;
 
         /// <param name="features">Precomputed snapping features (the web viewer gets them from the server); null
@@ -138,7 +159,7 @@ namespace Matterportable.Core
         {
             _view = input.View;
             _clip = input.ClipHeight;
-            if (Draft != null && Draft.FloorPlan != (_view == MeasureView.FloorPlan)) Finish();
+            if (Draft != null && Draft.FloorPlan != (_view == ViewMode.Floorplan)) Finish();
             Hovered = -1;
             var c = default(MeasureCursor);
             if (input.PointerBlocked || _bvh == null)
@@ -176,7 +197,7 @@ namespace Matterportable.Core
                 }
                 Selected = -1;
                 if (!Cursor.Valid) return;
-                Draft = new MeasureLine { FloorPlan = _view == MeasureView.FloorPlan };
+                Draft = new MeasureLine { FloorPlan = _view == ViewMode.Floorplan };
                 Draft.Points.Add(Cursor.Point);
                 return;
             }
@@ -292,13 +313,75 @@ namespace Matterportable.Core
 
         bool Shown(MeasureLine line)
         {
-            if (line.FloorPlan != (_view == MeasureView.FloorPlan)) return false;
+            if (line.FloorPlan != (_view == ViewMode.Floorplan)) return false;
             foreach (var p in line.Points) if (p.Y <= _clip) return true;
             return false;
         }
 
+        static readonly Rgba Shadow = new Rgba(0f, 0f, 0f, 0.55f), HoverColor = new Rgba(0.6f, 0.78f, 1f, 1f);
+        static readonly Rgba[] AxisColors = { MeasureOverlay.White, new Rgba(0.95f, 0.36f, 0.3f, 1f), new Rgba(0.35f, 0.62f, 1f, 1f), new Rgba(0.38f, 0.85f, 0.42f, 1f) }; // MeasureAxis order
+        readonly MeasureDrawList _draw = new MeasureDrawList();
+
+        /// <summary>
+        /// What to draw this frame, for a camera at <paramref name="eye"/> looking along +Z of <paramref name="rotation"/>
+        /// (vertical field of view in degrees) on a width × height pixel view: measurements and the line being drawn
+        /// (selected in blue, hovered light blue, lines drawn with Shift in their axis colour, pieces hidden behind
+        /// geometry faded), their points and labels, then the + cursor, ringed when it snapped.
+        /// </summary>
+        public void BuildOverlay(Vec3 eye, Quat rotation, float fovDegrees, float width, float height, MeasureOverlay overlay)
+        {
+            const float near = 0.04f; // just past the cameras' near plane
+            var items = overlay.Items;
+            items.Clear();
+            BuildDrawList(eye, _draw);
+            var toCamera = rotation.ToMat3().Transposed;
+            var forward = rotation * Vec3.Forward;
+            float focal = height * 0.5f / (float)Math.Tan(fovDegrees * Math.PI / 360);
+            bool Project(Vec3 p, out float x, out float y)
+            {
+                var c = toCamera * (p - eye);
+                float z = Math.Max(c.Z, near);
+                x = width * 0.5f + c.X / z * focal;
+                y = height * 0.5f - c.Y / z * focal;
+                return c.Z >= near * 0.99f;
+            }
+            void Add(MeasureOverlay.Kind kind, float x, float y, float x2, float y2, float size, Rgba color) =>
+                items.Add(new MeasureOverlay.Item { Kind = kind, X = x, Y = y, X2 = x2, Y2 = y2, Size = size, Color = color });
+            Rgba Faded(Rgba c, float alpha) => new Rgba(c.R, c.G, c.B, c.A * alpha);
+
+            for (int pass = 0; pass < 2; pass++) // hidden pieces first, faded; then the visible ones
+                foreach (var s in _draw.Segments)
+                {
+                    Vec3 a = s.A, b = s.B;
+                    if (s.Occluded != (pass == 0) || !ClipToFront(ref a, ref b, eye, forward, near)) continue;
+                    Project(a, out float ax, out float ay);
+                    Project(b, out float bx, out float by);
+                    var color = s.Line >= 0 && s.Line == Selected ? MeasureOverlay.Accent : s.Line >= 0 && s.Line == Hovered ? HoverColor
+                        : s.Line < 0 ? AxisColors[(int)s.Axis] : MeasureOverlay.White;
+                    float alpha = s.Occluded ? 0.4f : 1f;
+                    Add(MeasureOverlay.Kind.Line, ax, ay, bx, by, s.Occluded ? 3f : 5f, Faded(Shadow, alpha));
+                    Add(MeasureOverlay.Kind.Line, ax, ay, bx, by, s.Occluded ? 1.5f : 3f, Faded(color, alpha));
+                }
+            foreach (var p in _draw.Points)
+            {
+                if (!Project(p.At, out float x, out float y)) continue;
+                Add(MeasureOverlay.Kind.Dot, x, y, 0, 0, 5.5f, Shadow);
+                Add(MeasureOverlay.Kind.Dot, x, y, 0, 0, 4f, p.Line >= 0 && p.Line == Selected ? MeasureOverlay.Accent : MeasureOverlay.White);
+            }
+            foreach (var l in _draw.Labels)
+                if (Project(l.At, out float x, out float y))
+                    items.Add(new MeasureOverlay.Item { Kind = MeasureOverlay.Kind.Label, X = x, Y = y, Text = l.Text, Selected = l.Line >= 0 && l.Line == Selected });
+            if (!Cursor.Valid || !Project(Cursor.Point, out float cx, out float cy)) return;
+            foreach (var (w, color) in new[] { (4f, Shadow), (2f, MeasureOverlay.White) })
+            {
+                Add(MeasureOverlay.Kind.Line, cx - 10, cy, cx + 10, cy, w, color);
+                Add(MeasureOverlay.Kind.Line, cx, cy - 10, cx, cy + 10, w, color);
+            }
+            if (Cursor.Snap != MeasureSnap.Surface) Add(MeasureOverlay.Kind.Ring, cx, cy, 0, 0, 9f, AxisColors[(int)Cursor.Axis]);
+        }
+
         /// <summary>Clips a segment to the part in front of the camera's near plane. False if it is all behind.</summary>
-        public static bool ClipToFront(ref Vec3 a, ref Vec3 b, Vec3 eye, Vec3 forward, float near)
+        static bool ClipToFront(ref Vec3 a, ref Vec3 b, Vec3 eye, Vec3 forward, float near)
         {
             float da = Vec3.Dot(a - eye, forward) - near, db = Vec3.Dot(b - eye, forward) - near;
             if (da < 0 && db < 0) return false;
@@ -309,29 +392,13 @@ namespace Matterportable.Core
 
         // ------------------------------------------------------------------ geometry queries
 
-        /// <summary>
-        /// First surface the user can see along the ray: outside Inside view back faces are culled (you look into
-        /// rooms through their walls), and geometry above the clip height is hidden.
-        /// </summary>
+        /// <summary>First surface the user sees (back faces culled outside Inside view, nothing above the clip height).</summary>
         bool Raycast(Vec3 origin, Vec3 dir, float maxDistance, out Vec3 point, out float distance)
         {
-            point = default;
-            distance = 0;
-            bool cullBack = _view != MeasureView.Inside;
-            var o = origin;
-            for (int i = 0; i < 16 && distance < maxDistance; i++)
-            {
-                if (!_bvh.Raycast(o, dir, maxDistance - distance, out var hit)) return false;
-                distance += hit.Distance;
-                if ((!cullBack || Vec3.Dot(hit.Normal, dir) < 0) && hit.Point.Y <= _clip)
-                {
-                    point = hit.Point;
-                    return true;
-                }
-                o = hit.Point + dir * 0.01f;
-                distance += 0.01f;
-            }
-            return false;
+            bool found = _bvh.RaycastVisible(origin, dir, maxDistance, _view != ViewMode.Inside, _clip, out var hit);
+            point = hit.Point;
+            distance = hit.Distance;
+            return found;
         }
 
         bool Occluded(Vec3 eye, Vec3 p)
@@ -393,7 +460,7 @@ namespace Matterportable.Core
             var dir = AxisX;
             float best = Math.Abs(Vec3.Dot(d, AxisX));
             if (Math.Abs(Vec3.Dot(d, AxisZ)) > best) { best = Math.Abs(Vec3.Dot(d, AxisZ)); axis = MeasureAxis.Z; dir = AxisZ; }
-            if (input.View != MeasureView.FloorPlan && Math.Abs(d.Y) > best) { axis = MeasureAxis.Vertical; dir = Vec3.Up; }
+            if (input.View != ViewMode.Floorplan && Math.Abs(d.Y) > best) { axis = MeasureAxis.Vertical; dir = Vec3.Up; }
             // The point on the axis line nearest the pointer ray (falls back to projecting the cursor point).
             if (!ClosestOnLineToRay(start, dir, input.RayOrigin, input.RayDirection, out float t)) t = Vec3.Dot(target - start, dir);
             c = new MeasureCursor { Valid = true, Point = start + dir * Math.Max(-200f, Math.Min(200f, t)), Snap = MeasureSnap.Axis, Axis = axis };

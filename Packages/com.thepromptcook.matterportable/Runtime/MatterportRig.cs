@@ -1,3 +1,4 @@
+using Matterportable.Core;
 using UnityEngine;
 
 namespace Matterportable
@@ -20,19 +21,19 @@ namespace Matterportable
         }
 
         /// <summary>Creates the rig. In Play mode the space starts loading next frame; in Edit mode it previews.</summary>
-        public static MatterportRig Create(string link, string cacheFolder = "", MatterportViewerSettings settings = null)
+        public static MatterportRig Create(string link, string cacheFolder = "", ViewerSettings settings = null)
         {
             var space = new GameObject("Matterport Space").AddComponent<MatterportSpace>();
             space.link = link ?? "";
             space.cacheFolder = cacheFolder ?? "";
-            space.settings = settings;
+            if (settings != null) space.settings = settings;
 
             var camGo = new GameObject("Matterport Camera") { tag = "MainCamera" };
             var cam = camGo.AddComponent<Camera>();
             cam.clearFlags = CameraClearFlags.Skybox;
             cam.nearClipPlane = 0.03f;
             cam.farClipPlane = 1000f;
-            cam.fieldOfView = space.Settings.defaultFov;
+            cam.fieldOfView = space.settings.DefaultFov;
             camGo.AddComponent<AudioListener>();
             var nav = camGo.AddComponent<MatterportNavigator>();
             nav.space = space;
@@ -42,8 +43,8 @@ namespace Matterportable
             if (!Application.isPlaying)
             {
                 space.BuildEditorPreview();
-                if (space.Sweeps.Count > 0)
-                    camGo.transform.position = space.SweepWorldPosition(Mathf.Clamp(space.startSweep, 0, space.Sweeps.Count - 1));
+                if (space.Model != null)
+                    camGo.transform.position = space.SweepWorldPosition(Mathf.Clamp(space.startSweep, 0, space.Model.Sweeps.Count - 1));
             }
             return new MatterportRig(space, nav, cam);
         }

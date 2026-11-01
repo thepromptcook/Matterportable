@@ -17,11 +17,7 @@ namespace Matterportable
         public bool Active { get; private set; }
         public MeasureTool Tool { get; private set; }
 
-        static readonly Color White = new Color(1f, 1f, 1f), Shadow = new Color(0f, 0f, 0f, 0.55f), Ink = new Color(0.1f, 0.1f, 0.12f);
-        static readonly Color Accent = new Color(0.18f, 0.45f, 0.85f), Hover = new Color(0.6f, 0.78f, 1f);
-        static readonly Color AxisX = new Color(0.95f, 0.36f, 0.3f), AxisZ = new Color(0.38f, 0.85f, 0.42f), AxisVertical = new Color(0.35f, 0.62f, 1f);
-
-        readonly MeasureDrawList _draw = new MeasureDrawList();
+        readonly MeasureOverlay _items = new MeasureOverlay();
         SpaceGeometry _toolGeometry;
         Control _overlay;
         PanelContainer _panel;
@@ -39,7 +35,7 @@ namespace Matterportable
             _pill = new StyleBoxFlat { BgColor = new Color(1f, 1f, 1f, 0.95f), ContentMarginLeft = 8, ContentMarginRight = 8 };
             _pill.SetCornerRadiusAll(10);
             _pillSelected = (StyleBoxFlat)_pill.Duplicate();
-            _pillSelected.BgColor = Accent;
+            _pillSelected.BgColor = MeasureOverlay.Accent.ToGodot();
             BuildPanel();
         }
 
@@ -83,16 +79,16 @@ namespace Matterportable
         /// <summary>Enters or leaves measure mode. Measurements stay until the space is closed (they are temporary).</summary>
         public void SetActive(bool on)
         {
-            if (on && (Space == null || !Space.IsLoaded || Space.Geometry == null)) return;
+            if (on && (Space == null || !Space.IsLoaded || Space.Model.Geometry == null || Navigator.Core == null)) return;
             if (on == Active) return;
             Active = on;
-            if (on && _toolGeometry != Space.Geometry)
+            if (on && _toolGeometry != Space.Model.Geometry)
             {
-                Tool = new MeasureTool(Space.Geometry);
-                _toolGeometry = Space.Geometry;
+                Tool = new MeasureTool(Space.Model.Geometry);
+                _toolGeometry = Space.Model.Geometry;
             }
             if (!on) Tool?.Finish();
-            Navigator.ClickHandler = on ? _ => { Tool.Click(); return true; } : (Func<Vector2, bool>)null;
+            Navigator.Core.Measuring = on;
             _panel.Visible = on;
             _overlay.QueueRedraw();
         }
@@ -106,7 +102,6 @@ namespace Matterportable
 
         MeasureInput InputAt(Vector2 mouse, bool blocked)
         {
-            var mode = Navigator.Mode;
             return new MeasureInput
             {
                 RayOrigin = Navigator.ProjectRayOrigin(mouse).ToCore(),
@@ -115,8 +110,8 @@ namespace Matterportable
                 AxisLock = Input.IsKeyPressed(Key.Shift),
                 NoSnap = Input.IsKeyPressed(Key.Alt),
                 PointerBlocked = blocked,
-                View = mode == MatterportNavigator.ViewMode.Inside ? MeasureView.Inside : mode == MatterportNavigator.ViewMode.Dollhouse ? MeasureView.Dollhouse : MeasureView.FloorPlan,
-                ClipHeight = Navigator.ViewClipHeight,
+                View = Navigator.Core.Mode,
+                ClipHeight = Navigator.Core.ViewClipHeight,
             };
         }
 
@@ -138,9 +133,9 @@ namespace Matterportable
             if (Space == null || !Space.IsLoaded) { SetActive(false); return; }
             var vp = GetViewport();
             var mouse = vp.GetMousePosition();
-            bool blocked = !vp.GetVisibleRect().HasPoint(mouse) || vp.GuiGetHoveredControl() != null || Navigator.IsChangingMode;
+            bool blocked = !vp.GetVisibleRect().HasPoint(mouse) || vp.GuiGetHoveredControl() != null || Navigator.Core.IsChangingMode;
             Tool.Update(InputAt(mouse, blocked));
-            Tool.BuildDrawList(Navigator.GlobalPosition.ToCore(), _draw);
+            if (Navigator.Core.Clicked) Tool.Click();
             _overlay.QueueRedraw();
             UpdatePanel();
         }
@@ -172,75 +167,31 @@ namespace Matterportable
             }
         }
 
-        // ------------------------------------------------------------------ drawing (screen space)
-
-        Color SegmentColor(MeasureDrawList.Segment s)
-        {
-            if (s.Line >= 0 && s.Line == Tool.Selected) return Accent;
-            if (s.Line >= 0 && s.Line == Tool.Hovered) return Hover;
-            return s.Line < 0 ? AxisColor(s.Axis) : White;
-        }
-
-        /// <summary>Lines being drawn with Shift take the colour of their axis.</summary>
-        static Color AxisColor(MeasureAxis axis) =>
-            axis == MeasureAxis.X ? AxisX : axis == MeasureAxis.Z ? AxisZ : axis == MeasureAxis.Vertical ? AxisVertical : White;
-
-        bool Project(Vec3 p, out Vector2 screen)
-        {
-            var world = p.ToGodot();
-            screen = Navigator.UnprojectPosition(world);
-            return !Navigator.IsPositionBehind(world);
-        }
+        // ------------------------------------------------------------------ drawing (screen space, items from the Core)
 
         void DrawOverlay()
         {
-            if (!Active || Tool == null) return;
-            var eye = Navigator.GlobalPosition.ToCore();
-            var forward = (-Navigator.GlobalBasis.Z).ToCore();
-            float near = Navigator.Near + 0.01f;
-
-            for (int pass = 0; pass < 2; pass++) // hidden pieces first, faded; then the visible ones
-            foreach (var s in _draw.Segments)
-            {
-                if (s.Occluded != (pass == 0)) continue;
-                Vec3 a = s.A, b = s.B;
-                if (!MeasureTool.ClipToFront(ref a, ref b, eye, forward, near)) continue;
-                Project(a, out var pa);
-                Project(b, out var pb);
-                var c = SegmentColor(s);
-                if (s.Occluded) c.A = 0.4f;
-                _overlay.DrawLine(pa, pb, new Color(Shadow, Shadow.A * c.A), s.Occluded ? 3f : 5f, true);
-                _overlay.DrawLine(pa, pb, c, s.Occluded ? 1.5f : 3f, true);
-            }
-
-            foreach (var p in _draw.Points)
-            {
-                if (!Project(p.At, out var sp)) continue;
-                _overlay.DrawCircle(sp, 5.5f, Shadow);
-                _overlay.DrawCircle(sp, 4f, p.Line >= 0 && p.Line == Tool.Selected ? Accent : White);
-            }
-
+            var nav = Navigator.Core;
+            if (!Active || Tool == null || nav == null) return;
+            var size = GetViewport().GetVisibleRect().Size;
+            Tool.BuildOverlay(nav.CameraPosition, nav.CameraRotation, nav.Fov, size.X, size.Y, _items);
             var font = ThemeDB.FallbackFont;
-            const int size = 15;
-            foreach (var l in _draw.Labels)
+            const int fontSize = 15;
+            foreach (var it in _items.Items)
             {
-                if (!Project(l.At, out var sp)) continue;
-                var textSize = font.GetStringSize(l.Text, HorizontalAlignment.Left, -1, size);
-                var rect = new Rect2(sp - new Vector2(textSize.X / 2 + 8, 11), new Vector2(textSize.X + 16, 22));
-                bool selected = l.Line >= 0 && l.Line == Tool.Selected;
-                _overlay.DrawStyleBox(selected ? _pillSelected : _pill, rect);
-                _overlay.DrawString(font, new Vector2(rect.Position.X + 8, rect.Position.Y + 16), l.Text, HorizontalAlignment.Left, -1, size, selected ? White : Ink);
-            }
-
-            var cursor = Tool.Cursor;
-            if (cursor.Valid && Project(cursor.Point, out var cp))
-            {
-                foreach (var (w, col) in new[] { (4f, Shadow), (2f, White) })
+                var at = new Vector2(it.X, it.Y);
+                var color = it.Color.ToGodot();
+                if (it.Kind == MeasureOverlay.Kind.Line) _overlay.DrawLine(at, new Vector2(it.X2, it.Y2), color, it.Size, true);
+                else if (it.Kind == MeasureOverlay.Kind.Dot) _overlay.DrawCircle(at, it.Size, color);
+                else if (it.Kind == MeasureOverlay.Kind.Ring) _overlay.DrawArc(at, it.Size, 0, Mathf.Tau, 28, color, 2f, true);
+                else
                 {
-                    _overlay.DrawLine(cp - new Vector2(10, 0), cp + new Vector2(10, 0), col, w, true);
-                    _overlay.DrawLine(cp - new Vector2(0, 10), cp + new Vector2(0, 10), col, w, true);
+                    var textSize = font.GetStringSize(it.Text, HorizontalAlignment.Left, -1, fontSize);
+                    var rect = new Rect2(at - new Vector2(textSize.X / 2 + 8, 11), new Vector2(textSize.X + 16, 22));
+                    _overlay.DrawStyleBox(it.Selected ? _pillSelected : _pill, rect);
+                    _overlay.DrawString(font, new Vector2(rect.Position.X + 8, rect.Position.Y + 16), it.Text, HorizontalAlignment.Left, -1, fontSize,
+                        (it.Selected ? MeasureOverlay.White : MeasureOverlay.Ink).ToGodot());
                 }
-                if (cursor.Snap != MeasureSnap.Surface) _overlay.DrawArc(cp, 9f, 0, Mathf.Tau, 28, AxisColor(cursor.Axis), 2f, true);
             }
         }
     }

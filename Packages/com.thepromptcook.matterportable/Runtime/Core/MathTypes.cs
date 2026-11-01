@@ -67,6 +67,12 @@ namespace Matterportable.Core
         }
 
         public static float Distance(Vec3 a, Vec3 b) => (a - b).Length;
+        /// <summary>Angle between two directions in degrees (Unity's Vector3.Angle).</summary>
+        public static float Angle(Vec3 a, Vec3 b)
+        {
+            float d = (float)Math.Sqrt(a.SqrLength * b.SqrLength);
+            return d < 1e-15f ? 0f : (float)(Math.Acos(Math.Max(-1f, Math.Min(1f, Dot(a, b) / d))) * 180 / Math.PI);
+        }
 
         public bool Equals(Vec3 o) => X == o.X && Y == o.Y && Z == o.Z;
         public override bool Equals(object obj) => obj is Vec3 v && Equals(v);
@@ -135,6 +141,21 @@ namespace Matterportable.Core
                 double l = Math.Sqrt(X * X + Y * Y + Z * Z + W * W);
                 return l > 1e-12 ? new Quat(X / l, Y / l, Z / l, W / l) : Identity;
             }
+        }
+
+        /// <summary>Unity's Quaternion.Euler(pitch, yaw, 0) in degrees: yaw about +Y, then pitch about +X (down).</summary>
+        public static Quat Euler(double pitchDegrees, double yawDegrees) =>
+            AxisAngle(Vec3.Up, yawDegrees * Math.PI / 180) * AxisAngle(Vec3.Right, pitchDegrees * Math.PI / 180);
+
+        public static Vec3 operator *(Quat q, Vec3 v) => q.ToMat3() * v;
+
+        public static Quat Slerp(Quat a, Quat b, double t)
+        {
+            double d = a.X * b.X + a.Y * b.Y + a.Z * b.Z + a.W * b.W;
+            if (d < 0) { b = new Quat(-b.X, -b.Y, -b.Z, -b.W); d = -d; }
+            if (d > 0.9995) return new Quat(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t, a.Z + (b.Z - a.Z) * t, a.W + (b.W - a.W) * t).Normalized;
+            double theta = Math.Acos(d), s = Math.Sin(theta), wa = Math.Sin((1 - t) * theta) / s, wb = Math.Sin(t * theta) / s;
+            return new Quat(a.X * wa + b.X * wb, a.Y * wa + b.Y * wb, a.Z * wa + b.Z * wb, a.W * wa + b.W * wb);
         }
 
         public static Quat AxisAngle(Vec3 axis, double radians)

@@ -2,7 +2,6 @@
 // demo or a space the server already has; Esc or Menu returns here. The server downloads and prepares spaces.
 // URL parameters drive automated checks (tools/web-check.sh): ?open=<link|demo>&sweep=N&mode=dollhouse|floorplan
 // &view=N&goto=N&measure=1; window.mp reports state and offers showView() for the photo-vs-mesh comparison.
-import { ViewerSettings } from './ViewerSettings.js';
 import { MatterportSpace } from './MatterportSpace.js';
 import { MatterportNavigator, ViewMode } from './MatterportNavigator.js';
 import { MatterportMeasure } from './MatterportMeasure.js';
@@ -91,11 +90,9 @@ export class Launcher {
   async show(id) {
     this.close();
     this.menu.hidden = true;
-    if (this.params.has('aniso')) ViewerSettings.anisotropy = Number(this.params.get('aniso'));
-    const sp = this.space = new MatterportSpace(this.renderer, this.scene, ViewerSettings);
-    sp.startSweep = Number(this.params.get('sweep') ?? 0);
+    const sp = this.space = new MatterportSpace(this.renderer, this.scene, this.params.has('aniso') ? { anisotropy: Number(this.params.get('aniso')) } : {});
     try {
-      await sp.load(id, (t) => { sp.status = t; });
+      await sp.load(id);
     } catch (e) {
       sp.error = e.message ?? String(e);
       this.close();
@@ -104,9 +101,9 @@ export class Launcher {
       return;
     }
     const nav = this.nav = new MatterportNavigator(this.camera, this.renderer.domElement, sp, this.scene);
-    const mode = this.params.get('mode');
-    nav.startMode = mode === 'dollhouse' ? ViewMode.Dollhouse : mode === 'floorplan' ? ViewMode.Floorplan : ViewMode.Inside;
-    sp.debugView = Number(this.params.get('view') ?? 0);
+    const mode = { dollhouse: ViewMode.Dollhouse, floorplan: ViewMode.Floorplan }[this.params.get('mode')] ?? ViewMode.Inside;
+    sp.core.Navigate(7, Number(this.params.get('sweep') ?? 0), mode, 0);
+    nav.setDebugView(Number(this.params.get('view') ?? 0));
     const measure = this.measure = new MatterportMeasure(sp, nav);
     this.hud = new Hud(sp, nav, measure, () => this.showMenu());
     nav.onKey = (e) => measure.onKey(e) || this.hud.onKey(e);
@@ -129,10 +126,10 @@ export class Launcher {
   }
 
   update(dt) {
-    if (!this.space?.isLoaded) return;
-    this.nav.update(dt);
+    if (!this.space?.isLoaded || !this.nav) return;
+    const frame = this.nav.update(dt);
     this.measure.update();
-    this.space.update(this.camera);
+    this.space.update(frame, this.camera);
     this.hud.update();
   }
 
@@ -140,12 +137,15 @@ export class Launcher {
 
   /** Loaded, nothing loading, no animation: ready for a screenshot. */
   settled() {
-    const sp = this.space, nav = this.nav;
-    if (!sp?.isLoaded || !nav?.initialised) return false;
-    const c = sp.panoramas;
-    const textures = sp.info.parts?.filter((p) => p.texture).length ?? 0;
-    return c.activeLoads === 0 && c.queue.length === 0 && c.uploads.length === 0 && c.depthQueue.length === 0 &&
-      !nav.isChangingMode && !nav.isMoving && !nav.isWaitingForPanorama && sp.texturesLoaded >= textures;
+    const s = this.settleState();
+    return !!s && s.activeLoads === 0 && s.queued === 0 && !s.loaderBusy && !s.changingMode && !s.moving && !s.waiting && s.textures >= s.texturesWanted;
+  }
+
+  /** What settled() waits for (window.mp.settleState() shows it when a check hangs). */
+  settleState() {
+    const sp = this.space, nav = this.nav, f = nav?.frame;
+    return f && { activeLoads: f.activeLoads, queued: f.queued, loaderBusy: sp.panoramas.busy, changingMode: nav.isChangingMode, moving: nav.isMoving,
+      waiting: nav.isWaitingForPanorama, textures: sp.texturesLoaded, texturesWanted: sp.info.parts?.filter((p) => p.texture).length ?? 0 };
   }
 
   async waitSettled(frames = 20) {
@@ -168,12 +168,12 @@ export class Launcher {
       window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }));
       await nextFrame();
       this.measure.clickAt(w * 0.20, h * 0.60);
-      Object.assign(this.nav.pointer, { x: w * 0.45, y: h * 0.55, inside: true });
+      Object.assign(this.nav.pointer, { x: w * 0.45, y: h * 0.55, over: true });
       for (let i = 0; i < 5; i++) await nextFrame();
     }
     await this.waitSettled(20);
     const f = this.measure.frame;
-    this.checks = `${this.space.status}; mode ${['Inside', 'Dollhouse', 'Floorplan'][this.nav.mode]}, sweep ${this.nav.currentSweep}` +
+    this.checks = `${this.space.status}; mode ${['Inside', 'Dollhouse', 'Floorplan'][this.nav.frame.mode]}, sweep ${this.nav.frame.currentSweep}` +
       (f ? `; ${f.lines.length} measurement(s), drawing ${f.draft ? 'yes' : 'no'}, menu ${this.menu.hidden ? 'closed' : 'open'}` : '');
   }
 
@@ -183,21 +183,13 @@ export class Launcher {
       get checks() { return self.checks; },
       get error() { return self.space?.error ?? null; },
       sweepCount: () => self.space?.sweeps.length ?? 0,
-      /** What settled() waits for, to debug a check that hangs. */
-      settleState: () => {
-        const sp = self.space, c = sp?.panoramas, nav = self.nav;
-        return c && { activeLoads: c.activeLoads, queued: c.queue.length, uploads: c.uploads.length, depthQueue: c.depthQueue.length,
-          changingMode: nav.isChangingMode, moving: nav.isMoving, waiting: nav.isWaitingForPanorama, textures: sp.texturesLoaded,
-          texturesWanted: sp.info.parts?.filter((p) => p.texture).length ?? 0 };
-      },
-      hideUi: () => { self.hud.root.hidden = true; self.space.settings.showReticle = false; },
-      /** Photo-vs-mesh comparison: render view 1 (mesh texture) or 2 (photo) at a sweep and heading. */
+      settleState: () => self.settleState(),
+      hideUi: () => { self.hud.root.hidden = true; self.nav.markers.hidden = true; },
+      /** Photo-vs-mesh comparison: render view 1 (mesh texture) or 2 (photo) at a sweep and heading (Core yaw). */
       async showView(sweep, yaw, view) {
-        self.nav.teleport(sweep, yaw, -10);
-        self.space.debugView = view;
+        self.nav.teleport(sweep, yaw, 10);
+        self.nav.setDebugView(view);
         await self.waitSettled(4);
-        const e = self.space.panoramas.get(sweep);
-        return { size: e?.size ?? 0 };
       },
     };
   }
