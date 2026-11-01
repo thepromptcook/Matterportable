@@ -396,6 +396,73 @@ namespace Matterportable.Core
             return true;
         }
 
+        /// <summary>
+        /// The deepest overlap between a sphere and the mesh: <paramref name="push"/> is the unit direction from the
+        /// closest surface point to the centre, <paramref name="depth"/> how far the surface reaches into the sphere.
+        /// False when nothing is within <paramref name="radius"/>. Collision for the walking camera.
+        /// </summary>
+        public bool DeepestContact(Vec3 centre, float radius, out Vec3 push, out float depth)
+        {
+            push = default;
+            depth = 0;
+            if (TriangleCount == 0) return false;
+            var stack = _stack ?? (_stack = new int[128]);
+            float r2 = radius * radius, best = 0;
+            int sp = 0;
+            stack[sp++] = 0;
+            while (sp > 0)
+            {
+                ref Node node = ref _nodes[stack[--sp]];
+                float dx = Math.Max(0, Math.Max(node.Min.X - centre.X, centre.X - node.Max.X));
+                float dy = Math.Max(0, Math.Max(node.Min.Y - centre.Y, centre.Y - node.Max.Y));
+                float dz = Math.Max(0, Math.Max(node.Min.Z - centre.Z, centre.Z - node.Max.Z));
+                if (dx * dx + dy * dy + dz * dz > r2) continue;
+                if (node.Count == 0)
+                {
+                    if (sp + 2 > stack.Length) Array.Resize(ref stack, stack.Length * 2);
+                    stack[sp++] = node.LeftOrFirst;
+                    stack[sp++] = node.LeftOrFirst + 1;
+                    continue;
+                }
+                for (int s = node.LeftOrFirst, end = node.LeftOrFirst + node.Count; s < end; s++)
+                {
+                    var d = centre - ClosestOnTriangle(centre, _v0[s], _e1[s], _e2[s]);
+                    float dist2 = d.SqrLength;
+                    if (dist2 >= r2) continue;
+                    float dist = (float)Math.Sqrt(dist2), overlap = radius - dist;
+                    if (overlap <= best) continue;
+                    best = overlap;
+                    // Centre on the surface: push along the face normal.
+                    push = dist > 1e-6f ? d / dist : Vec3.Cross(_e1[s], _e2[s]).Normalized;
+                }
+            }
+            _stack = stack;
+            depth = best;
+            return best > 0;
+        }
+
+        /// <summary>Closest point to p on the triangle a, a + ab, a + ac (Ericson, Real-Time Collision Detection 5.1.5).</summary>
+        static Vec3 ClosestOnTriangle(Vec3 p, Vec3 a, Vec3 ab, Vec3 ac)
+        {
+            var ap = p - a;
+            float d1 = Vec3.Dot(ab, ap), d2 = Vec3.Dot(ac, ap);
+            if (d1 <= 0 && d2 <= 0) return a;
+            var bp = ap - ab;
+            float d3 = Vec3.Dot(ab, bp), d4 = Vec3.Dot(ac, bp);
+            if (d3 >= 0 && d4 <= d3) return a + ab;
+            float vc = d1 * d4 - d3 * d2;
+            if (vc <= 0 && d1 >= 0 && d3 <= 0) return a + ab * (d1 / (d1 - d3));
+            var cp = ap - ac;
+            float d5 = Vec3.Dot(ab, cp), d6 = Vec3.Dot(ac, cp);
+            if (d6 >= 0 && d5 <= d6) return a + ac;
+            float vb = d5 * d2 - d1 * d6;
+            if (vb <= 0 && d2 >= 0 && d6 <= 0) return a + ac * (d2 / (d2 - d6));
+            float va = d3 * d6 - d5 * d4;
+            if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) return a + ab + (ac - ab) * ((d4 - d3) / (d4 - d3 + (d5 - d6)));
+            float denom = 1f / (va + vb + vc);
+            return a + ab * (vb * denom) + ac * (vc * denom);
+        }
+
         static bool SlabTest(ref Node n, Vec3 o, float ix, float iy, float iz, float maxT, out float tEnter)
         {
             float t1 = (n.Min.X - o.X) * ix, t2 = (n.Max.X - o.X) * ix;
