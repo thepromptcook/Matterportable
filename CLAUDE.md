@@ -112,6 +112,15 @@ The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceD
   `dotnet` on PATH.
 - **Never commit `MatterportCache/`.** It holds third-party content.
 - **Commits and pushes go to the session's feature branch.** Keep each commit focused.
+- **Keep the skills current, without being asked.** Every change that adds a feature, moves code or teaches a lesson
+  also updates, in the same piece of work:
+  - `.claude/skills/matterportable-dev/SKILL.md`: the symptom → code map, checks and workflow
+  - `.claude/skills/matterportable-from-scratch/SKILL.md`: the architecture, build order, algorithms and pitfalls
+    needed to rebuild the project faster
+  - `matterport-formats.md`, for facts about Matterport's data
+  - this file
+
+  The goal is that the next session, or a rebuild from scratch, never rediscovers what this one learned.
 
 ## Conventions you must not break
 
