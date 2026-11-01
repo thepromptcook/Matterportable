@@ -292,12 +292,6 @@ namespace Matterportable.Core
         }
     }
 
-    /// <summary>Thrown when Matterport's bot protection answers instead of the API.</summary>
-    public sealed class MatterportBlockedException : MatterportException
-    {
-        public MatterportBlockedException(string message) : base(message) { }
-    }
-
     public sealed class MatterportGraphClient
     {
         public string Endpoint = MatterportQueries.ShowcaseGraphEndpoint;
@@ -327,9 +321,7 @@ namespace Matterportable.Core
             if (r.Error != null) throw new MatterportException("Could not reach Matterport: " + r.Error);
             var text = r.Text;
             if (IsBotChallenge(r.Status, text))
-                throw new MatterportBlockedException(
-                    "Matterport's bot protection blocked the request from this network. Open the space in your browser and use " +
-                    "the browser export (Tools~/browser-export.js, see README), then import the exported file.");
+                throw new MatterportException("Matterport's bot protection blocked the request from this network; try again later or from another network.");
             if (LooksLikeGraphQL(r)) return text;
             if (r.IsAuthFailure)
                 throw new MatterportException($"Matterport refused access (HTTP {r.Status}). The space is probably private or requires a login.");

@@ -150,20 +150,6 @@ namespace Matterportable.Tests
         }
 
         [Test]
-        public void ImportsBrowserExport()
-        {
-            var space = SmallSpace();
-            var fake = new FakeMatterport(space);
-            var export = JsonValue.NewObject().Set("matterportable", 1).Set("modelId", "DemoSpace01")
-                .Set("response", JsonValue.NewObject().Set("data", fake.BuildData()));
-            var manifest = new SpaceDownloader(fake, NullLog.Instance)
-                .ImportExportAsync(export.ToJson(), _dir, new DownloadOptions { PanoSizes = new[] { 32 } }, CancellationToken.None)
-                .GetAwaiter().GetResult();
-            Assert.AreEqual(space.Manifest.Sweeps.Count, manifest.Sweeps.Count);
-            Assert.IsTrue(File.Exists(Path.Combine(_dir, "DemoSpace01", SpaceManifest.FileName)));
-        }
-
-        [Test]
         public void TextureUrlCandidatesUseTheIndex()
         {
             var c = SpaceDownloader.TextureUrlCandidates("https://x/m_50k_<texture>.jpg?t=1", "m_50k_003.jpg");

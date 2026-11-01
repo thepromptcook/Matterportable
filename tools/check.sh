@@ -51,18 +51,6 @@ web_build_net10() {
 if [[ -x /opt/dotnet10/dotnet ]]; then step "web compile with .NET 10 (the user's SDK)" web_build_net10
 else skip "web compile with .NET 10" "run tools/setup-dev.sh"; fi
 
-browser_script_up_to_date() {
-  local tmp; tmp="$(mktemp)"
-  "$DOTNET" run --project tools/Matterportable.Cli --no-build -- browser-script >"$tmp" &&
-    diff -q "$tmp" "Packages/com.thepromptcook.matterportable/Tools~/browser-export.js" >/dev/null
-  local rc=$?; rm -f "$tmp"
-  [[ $rc == 0 ]] || echo "error: Tools~/browser-export.js is stale - regenerate: dotnet run --project tools/Matterportable.Cli -- browser-script > Packages/com.thepromptcook.matterportable/Tools~/browser-export.js"
-  return $rc
-}
-step "browser-export.js matches the C# query" browser_script_up_to_date
-
-if command -v node >/dev/null; then step "browser export (node, mock endpoint)" node tools/test_browser_export.js
-else skip "browser export" "node not installed"; fi
 if command -v glslangValidator >/dev/null; then step "shaders (glslang HLSL)" python3 tools/check_shaders.py
 else skip "shaders" "glslang-tools not installed"; fi
 if [[ $FAST == 0 ]] && [[ -x "${GODOT:-/opt/godot/godot}" ]] && command -v xvfb-run >/dev/null; then

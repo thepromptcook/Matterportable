@@ -61,7 +61,7 @@ namespace Matterportable.Tests
             }
         }
 
-        public JsonValue BuildData()
+        JsonValue BuildData()
         {
             var m = _space.Manifest;
             var id = m.ModelId;

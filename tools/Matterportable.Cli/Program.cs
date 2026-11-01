@@ -19,18 +19,12 @@ namespace Matterportable.Cli
 Commands:
   download <link> [--out DIR] [--pano 512,2048] [--textures high|low] [--max-sweeps N] [--concurrency N]
         Download a space into DIR/<model id> (default DIR: ./MatterportCache). Resumable.
-  import <export.json> [--out DIR] [--pano ...]
-        Import a JSON file saved by the browser export script and download its assets.
   demo [--out DIR] [--size 1024]
         Write the procedural demo house (PNG panoramas) - no network needed.
   info <space dir>
         Summarise a cached space.
-  align <space dir>
-        Run the panorama alignment solver (PNG spaces only; JPEG spaces are aligned inside Unity).
   diagnose <space dir>
         Print the diagnostics report (same as Copy Diagnostics in Unity; signed links redacted).
-  browser-script [link]
-        Print the browser-console export script (fallback for blocked networks).
 ";
 
         static int Main(string[] args)
@@ -54,15 +48,10 @@ Commands:
                     switch (args[0])
                     {
                         case "download": return Download(opts, log, cts.Token).GetAwaiter().GetResult();
-                        case "import": return Import(opts, log, cts.Token).GetAwaiter().GetResult();
                         case "demo": return Demo(opts);
                         case "info": return Info(opts);
-                        case "align": return Align(opts, log, cts.Token);
                         case "diagnose":
                             Console.WriteLine(Diagnostics.Report(opts.Positional(0, "space dir"), "matterportable CLI"));
-                            return 0;
-                        case "browser-script":
-                            Console.WriteLine(BrowserExport.BuildScript(opts.Count > 0 ? MatterportLink.ParseModelId(opts.Positional(0, "link")) : null));
                             return 0;
                         default:
                             Console.Error.WriteLine("Unknown command: " + args[0]);
@@ -102,20 +91,6 @@ Commands:
                 await Progress(task, downloader.Status);
                 var m = await task;
                 Console.WriteLine($"Done: \"{m.Name}\" → {dir}");
-            }
-            return 0;
-        }
-
-        static async Task<int> Import(Options o, ILogSink log, CancellationToken ct)
-        {
-            var file = o.Positional(0, "export.json");
-            using (var http = new HttpClientTransport())
-            {
-                var downloader = new SpaceDownloader(http, log);
-                var task = downloader.ImportExportAsync(File.ReadAllText(file), o.Get("out", CacheLayout.DefaultFolderName), DownloadOptionsFrom(o), ct);
-                await Progress(task, downloader.Status);
-                var m = await task;
-                Console.WriteLine($"Done: \"{m.Name}\" ({m.ModelId})");
             }
             return 0;
         }
@@ -168,25 +143,10 @@ Commands:
             return 0;
         }
 
-        static int Align(Options o, ILogSink log, CancellationToken ct)
-        {
-            var dir = o.Positional(0, "space dir");
-            var cal = CalibrationPipeline.Run(dir, path =>
-            {
-                if (!path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
-                    throw new NotSupportedException("The CLI can only decode PNG; align JPEG spaces inside Unity (inspector ▸ Re-run Panorama Alignment).");
-                return CalibrationPipeline.LoadPngLuma(path);
-            }, log, ct);
-            Console.WriteLine($"Calibration: {cal.Method}, rotation {cal.Rotation}, score {cal.Score:0.000}, margin {cal.Margin:0.000}");
-            return 0;
-        }
-
         sealed class Options
         {
             readonly List<string> _positional = new List<string>();
             readonly Dictionary<string, string> _named = new Dictionary<string, string>();
-
-            public int Count => _positional.Count;
 
             public static Options Parse(string[] args)
             {

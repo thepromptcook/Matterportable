@@ -81,28 +81,7 @@ namespace Matterportable.Core
                     WriteDebug(spaceDir, "graph-pruned-fields.txt", string.Join("\n", outcome.PrunedFields));
                 return outcome.Data;
             }
-            return RunAsync(modelId, Fetch, true, spaceDir, options ?? new DownloadOptions(), MatterportLink.ShowcaseUrl(modelId), ct);
-        }
-
-        /// <summary>
-        /// Imports the JSON saved by the browser export snippet (or any raw GraphQL response for the model query).
-        /// The signed asset links inside expire after a while, so import soon after exporting.
-        /// </summary>
-        public Task<SpaceManifest> ImportExportAsync(string exportJson, string cacheRoot, DownloadOptions options, CancellationToken ct)
-        {
-            var json = JsonValue.Parse(exportJson);
-            JsonValue data = json["response"]["data"];
-            if (!data.IsObject) data = json["data"];
-            if (!data.IsObject && json["model"].IsObject) data = json;
-            if (!data.IsObject || !data["model"].IsObject)
-                throw new MatterportException("This file does not look like a Matterportable browser export (no data.model found).");
-
-            var modelId = data["model"]["id"].AsString() ?? json["modelId"].AsString();
-            if (string.IsNullOrEmpty(modelId)) throw new MatterportException("The export does not contain a model ID.");
-            var spaceDir = CacheLayout.SpaceDir(cacheRoot, modelId);
-            WriteDebug(spaceDir, "graph-response.json", exportJson);
-            return RunAsync(modelId, _ => Task.FromResult(data), false, spaceDir, options ?? new DownloadOptions(),
-                MatterportLink.ShowcaseUrl(modelId), ct);
+            return RunAsync(modelId, Fetch, spaceDir, options ?? new DownloadOptions(), ct);
         }
 
         sealed class Item
@@ -120,8 +99,7 @@ namespace Matterportable.Core
             public List<Item> Items = new List<Item>();
         }
 
-        async Task<SpaceManifest> RunAsync(string modelIdHint, Func<CancellationToken, Task<JsonValue>> fetch, bool canRefresh,
-            string spaceDir, DownloadOptions o, string sourceUrl, CancellationToken ct)
+        async Task<SpaceManifest> RunAsync(string modelId, Func<CancellationToken, Task<JsonValue>> fetch, string spaceDir, DownloadOptions o, CancellationToken ct)
         {
             Directory.CreateDirectory(spaceDir);
             Status.SetStage("Fetching space information");
@@ -134,9 +112,9 @@ namespace Matterportable.Core
 
             var manifest = new SpaceManifest
             {
-                ModelId = remote.ModelId ?? modelIdHint,
+                ModelId = remote.ModelId ?? modelId,
                 Name = remote.Name,
-                SourceUrl = sourceUrl,
+                SourceUrl = MatterportLink.ShowcaseUrl(modelId),
                 CreatedUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
                 Frame = CoordinateFrame.ZUpRightHanded,
                 Floors = remote.Floors,
@@ -200,7 +178,7 @@ namespace Matterportable.Core
 
             // 3) Signed links can expire mid-download; refresh them once and retry what failed.
             var failed = all.FindAll(i => !i.Ok);
-            if (canRefresh && failed.Exists(i => i.AuthFailed))
+            if (failed.Exists(i => i.AuthFailed))
             {
                 Status.SetStage("Refreshing expired links");
                 _log.Info($"{failed.Count} downloads were refused; refreshing the signed links and retrying…");

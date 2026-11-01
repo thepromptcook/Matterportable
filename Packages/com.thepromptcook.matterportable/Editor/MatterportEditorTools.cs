@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Threading;
-using System.Threading.Tasks;
 using Matterportable.Core;
 using UnityEditor;
 using UnityEngine;
@@ -10,7 +9,7 @@ namespace Matterportable.Editor
 {
     /// <summary>
     /// Editor-side actions (the in-game launcher is the main way to open spaces): downloads with a cancelable progress
-    /// bar, browser-export import, diagnostics, and the Tools / GameObject menu items.
+    /// bar, diagnostics, and the Tools / GameObject menu items.
     /// </summary>
     public static class MatterportEditorTools
     {
@@ -23,35 +22,7 @@ namespace Matterportable.Editor
         {
             if (_busy || !MatterportLink.TryParseModelId(link, out var id)) return;
             var dir = MatterportPaths.SpaceDir(cacheFolder, id);
-            await RunJob("Downloading " + id, async (downloader, ct) =>
-            {
-                await downloader.DownloadAsync(id, dir, new DownloadOptions(), ct);
-                return dir;
-            }, onDone);
-        }
-
-        [MenuItem("Tools/Matterportable/Import Browser Export…", priority = 10)]
-        static async void ImportBrowserExport()
-        {
-            var file = EditorUtility.OpenFilePanel("Matterportable browser export", "", "json");
-            if (string.IsNullOrEmpty(file) || _busy) return;
-            await RunJob("Importing browser export", async (downloader, ct) =>
-            {
-                var manifest = await downloader.ImportExportAsync(File.ReadAllText(file), MatterportPaths.DefaultCacheRoot, new DownloadOptions(), ct);
-                return MatterportPaths.SpaceDir("", manifest.ModelId);
-            }, null);
-        }
-
-        [MenuItem("Tools/Matterportable/Copy Browser Export Script", priority = 11)]
-        static void CopyBrowserScript()
-        {
-            EditorGUIUtility.systemCopyBuffer = BrowserExport.BuildScript();
-            Debug.Log("[Matterportable] Browser export script copied. Paste it into the developer console on https://my.matterport.com/show/?m=<id>, " +
-                      "then use Tools ▸ Matterportable ▸ Import Browser Export….");
-        }
-
-        static async Task RunJob(string title, Func<SpaceDownloader, CancellationToken, Task<string>> work, Action onDone)
-        {
+            var title = "Downloading " + id;
             _busy = true;
             var cts = new CancellationTokenSource();
             var log = new BufferLog { Forward = UnityLog.WarningsOnly };
@@ -64,7 +35,7 @@ namespace Matterportable.Editor
             EditorApplication.update += Progress;
             try
             {
-                var dir = await work(downloader, cts.Token);
+                await downloader.DownloadAsync(id, dir, new DownloadOptions(), cts.Token);
                 EditorApplication.update -= Progress;
                 EditorUtility.DisplayProgressBar(title, "Aligning panoramas…", 1f);
                 var cal = await CalibrationRunner.RunAsync(dir, log, cts.Token);
