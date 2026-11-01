@@ -30,6 +30,9 @@ tools/web-check.sh --compare <id> 6 && python3 tools/compare_alignment.py /tmp/m
 dotnet run --project tools/Matterportable.Cli -- download https://my.matterport.com/show/?m=<id>
 xvfb-run -a -s "-screen 0 960x540x24" /opt/godot/godot --path godot --resolution 960x540 --rendering-method gl_compatibility -- --open <id> --compare /tmp/cmp/<id>
 python3 tools/compare_alignment.py /tmp/cmp/<id>
+# rendering fidelity: Walk mode at sweeps without their own photo vs the photo (SSIM/PSNR; dev skill explains)
+xvfb-run -a -s "-screen 0 960x540x24" /opt/godot/godot --path godot --resolution 960x540 --rendering-method gl_compatibility -- --open <id> --compare-sweeps 8 --fidelity /tmp/fid/a
+python3 tools/compare_fidelity.py /tmp/fid/a /tmp/fid/b
 dotnet test tools/Matterportable.Core.Tests --filter Alignment
 dotnet run --project tools/Matterportable.Cli -- help   # download / demo / info / diagnose
 ```
@@ -42,7 +45,8 @@ Add `/opt/dotnet` to `PATH` if `dotnet` isn't found.
 Packages/com.thepromptcook.matterportable/
   Runtime/Core/        engine-agnostic C# (noEngineReferences): link parsing, JSON, self-healing GraphQL
                        client, downloader, DAM decoder, BVH, frames, alignment solver, synthetic space, diagnostics,
-                       and the viewer every front end runs:
+                       MeshTiles + Draco (Matterport's 3D-tile mesh, downloaded to tiles/ for reconstruction, not
+                       shown), and the viewer every front end runs:
     Viewer.cs          ViewerSettings (the one set of defaults), SpaceModel (sweeps, floors, ray casts, load cache),
                        ViewerText (key hint, F1 stats, floor labels)
     Navigator.cs       Matterport navigation: input → camera pose, ViewBinding (what the shaders show), markers;
@@ -145,6 +149,10 @@ The data flow is: link → model id → GraphQL (`MatterportApi.cs`) → `SpaceD
   take (-x, -y, z, w).
 - **Shader globals** are written only by `MatterportSpace.ApplyView` (once per frame, in `LateUpdate`, from the
   navigator's `ViewBinding`). Every shader declares them in `MatterportCommon.hlsl`. Change both together.
+- **Panorama and depth sampling** (all three shader sets, measured with `--fidelity`): panoramas go through
+  `MP_SamplePano` (gradients, but an explicit LOD along face edges, or seams draw dashed lines); occlusion goes
+  through `MP_DepthVisibility` (the test on 4 point-sampled depth texels, blended), so depth textures stay
+  point-sampled. `UseDepth` is off while the camera stands on the shown sweep.
 - **Settings** are a `ViewerSettings` field on `MatterportSpace` (inspector), read live by the Core objects. In Play
   mode `OnValidate` copies inspector edits into the instance the Core holds, in case Unity replaced it.
 - **Domain reload is off** (fast Enter Play Mode, set by the project setup), so statics survive between Play sessions.

@@ -49,11 +49,35 @@ tools/godot-check.sh --sweep 5 --view 2   # another sweep; F2 render view 2 = pa
 
 The Godot launcher also takes these arguments after `--`: `--open <link|demo>`, `--sweep N`,
 `--mode inside|dollhouse|floorplan|walk`, `--yaw D`, `--walk S` (holds W for S seconds; the log line gives the camera
-position), `--view N`, `--measure` (places a two-segment line with real clicks, sends a
+position), `--view N`, `--views 0,2,3` (with `--screenshot f.png`: one file per render view, `f_v0.png` …, from the
+same spot), `--depth N` (depth cube size), `--fidelity dir` (below), `--measure` (places a two-segment line with real clicks, sends a
 real Escape, starts another line; the log then says "1 measurement(s), drawing yes, menu closed"), `--goto N` (a real transition; the screenshot waits until it
 finishes), `--screenshot file.png` (it quits after saving). Use them to
 reproduce a bug in a single run. The demo's panoramas are rendered from the synthetic house, so at a sweep the
 projection must line up exactly. Isolate a problem with views 1 (mesh texture), 2 (panorama) and 3 (visibility).
+
+### Measuring visual fidelity (screenshots → numbers)
+
+To judge a rendering change, score it instead of eyeballing it. Walk mode shows views where no photo was taken, so
+the test is leave-one-out: at a sweep, render Walk mode **without** that sweep's photo and compare with the photo.
+
+```bash
+xvfb-run -a -s "-screen 0 960x540x24" /opt/godot/godot --path godot --resolution 960x540 --rendering-method gl_compatibility -- --open rGMMnZDh3Tf --compare-sweeps 8 --fidelity /tmp/fid/a
+```
+
+```bash
+python3 tools/compare_fidelity.py /tmp/fid/a /tmp/fid/b   # SSIM and PSNR per run (28 views each)
+```
+
+- Restore `godot/Matterportable.csproj` afterwards if Godot rewrote its SDK version (`git checkout` it).
+- **Check placement first:** the log ends "walk camera at most X cm from the photo's spot". It must be 0.0, or
+  the scores measure the offset instead of the rendering (that hid the eye-height bug).
+- The photos are rendered through the same shader (view 2), so a sampling change moves both sides: diff the
+  images too (`numpy` mean absolute difference), and look at the worst pair with Read.
+- History on the user's house: original shaders 0.611 SSIM / 18.16 dB → PCF + seam fix + exact eye height 0.639 /
+  18.65 dB. No gain from: 1024 depth cubes, sharper blend weights (worse), the 3D-tile mesh (0.636). An oracle
+  colour match would add only ~0.02, so exposure differences between sweeps are minor; the rest is geometry
+  (photos projected onto an approximate mesh) and disocclusion.
 
 ## 1. Set up (once per container)
 
@@ -86,15 +110,20 @@ tools/check.sh
 | Link not recognised | `Runtime/Core/MatterportLink.cs` (+ `LinkAndJsonTests`) |
 | "field not available" / missing data from the API | `MatterportQueries.ModelQuery` and `RemoteModelParser` in `Runtime/Core/MatterportApi.cs`; `debug/graph-response.json` |
 | Download fails, expired links, wrong files | `Runtime/Core/SpaceDownloader.cs` (texture URL candidates, `<face>` templates, tiers, refresh) |
+| Mesh tiles (`tiles/`, Draco GLBs) missing or unreadable | `SpaceDownloader.DownloadTilesAsync` (right after the mesh: tokens last ~5 min), `MeshTiles.cs` (tileset leaves, GLB → Core frame), `Draco.cs` (sequential Draco 2.2 only) + `MeshTileTests` (a grid Google's encoder wrote) |
 | Mesh missing, garbled, `UVs: False` | `Runtime/Core/Dam.cs` (`ReadSimpleChunk` UV detection); `debug/dam-structure.txt` |
 | Sideways, mirrored or inside-out mesh | `SpaceCalibrator.CheckGeometry` (frames, winding) in `PanoAlignmentSolver.cs`; `Frames` in `MathTypes.cs` |
 | Panoramas rotated or not lining up with geometry | `PanoAlignmentSolver.Solve`; `calibration.json` (method/score/faces); shader `MP_PanoCoords` |
 | Slow or failed load, Play-mode errors | `Runtime/Space/MatterportSpace.cs` `LoadRoutine`; `debug/load.log` |
 | Panorama streaming, memory, pop-in | what/when: Core `PanoramaScheduler.cs` (tiers, priorities, LRU budget, pinned sweeps); how: each front end's `PanoramaCache` (decode, upload); settings `PanoMaxSize`, `PanoMemoryBudgetMB`, `PrefetchNeighbors` in `ViewerSettings` (`Core/Viewer.cs`) |
 | Smearing during moves | depth cubes (scheduler `RequestDepth` → `PanoramaCache.ComputeDepth`), `UseDepth` in `Navigator.PushView`, `MP_Visibility` / `MP_BlendWeights` in `MatterportCommon.hlsl` |
+| Dotted or blocky outlines around objects while moving or walking | `MP_DepthVisibility` (PCF: the visibility test on 4 point-sampled depth texels, blended); depth textures must stay point-sampled (Unity `FilterMode.Point`, Godot `filter_nearest`, web `NearestFilter` cube target with `mpCubeDir`) |
+| Thin lines along outlines at rest on a sweep | `Navigator.PushView`: no depth test while the camera stands on the shown sweep (`atSweep`) |
+| Dashed lines along panorama cube-face seams | `MP_SamplePano` / `mp_sample_pano` / `samplePanoA`: explicit LOD in a band along face edges (gradient sampling there draws the dashes; isotropic gradients don't help) |
 | Click / WASD / drag / zoom feel, transitions, dollhouse, floor plan, tour | Core `Navigator.cs` + `ViewerTests`; settings in `ViewerSettings`. The `MatterportNavigator` adapters only map input and apply the pose (web: through `Bridge.Frame`) |
 | Wrong panorama shown, bad blend, floors not clipped, culling | `Navigator.PushView` → `ViewBinding` → `MatterportSpace.ApplyView` (Unity, Godot) / `MatterportSpace.update` (web) |
-| Walk mode: walks through something, gets stuck, can't climb stairs, jittery steps | Core `Walker.cs` (body spheres, foot rays, step/fall, no-floor refusal; settings `BodyRadius`, `StepHeight`, `WalkSpeed`) + `WalkingTests`; `Navigator.UpdateWalk` / `StartWalk` (eye height, `Standing`) |
+| Walk mode: walks through something, gets stuck, can't climb stairs, jittery steps | Core `Walker.cs` (body spheres, foot rays, step/fall, no-floor refusal; settings `BodyRadius`, `StepHeight`, `WalkSpeed`) + `WalkingTests`; `Navigator.UpdateWalk` / `StartWalk` (`Standing`) |
+| Walk mode: view at a sweep doesn't match the photo, eyes too low/high | `Walker` constructor: `FloorUnder` (first walkable surface 1-2.5 m below the eye, so table tops are skipped) and the ring search for room to stand; the eye height is the capture camera's height above that floor |
 | Walk mode: popping or wrong photos between sweeps | `Navigator.UpdateWalkPanoramas` (two nearest sweeps in sight, weights 1/d − 1/d₃, sticky slots). Ghosting of thin unscanned things is inherent to projecting photos |
 | Markers, cursor | what and where: `Navigator.BuildMarkers`; drawing: `SweepMarkers` + marker shader |
 | F1 stats, key hint, floor button labels | `ViewerText` in `Core/Viewer.cs` |

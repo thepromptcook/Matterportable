@@ -66,7 +66,8 @@ records the decisions behind it and the order that worked.
 Core (pure C#)
   MatterportLink → MatterportGraphClient + SelfHealingQuery → RemoteModelParser
   → SpaceDownloader (mesh first, material names → texture URLs, faces per tier; resumable, refreshes expired links)
-  → cache folder (manifest.json, mesh, textures, panos, debug)
+  → cache folder (manifest.json, mesh, textures, panos, tiles, debug)
+  MeshTiles + Draco: Matterport's 3D-tile mesh (tileset leaves, Draco GLBs → Core frame), saved for reconstruction
   DamDecoder → SpaceGeometry (frame conversion, per-material parts, BVH) → SweepBuilder (floor points, floors, neighbours)
   SpaceCalibrator.CheckGeometry + PanoAlignmentSolver → calibration.json      (CalibrationPipeline wires it up)
 Core viewer (what all three front ends run; tested without any engine)
@@ -124,6 +125,9 @@ Web: server (ASP.NET Core, the Core natively: download, bundle, BVH + features) 
      `tools/compare_alignment.py`), with a negative control: break the calibration and confirm it fails.
    - Check floor-to-ceiling heights for scale.
    - Make the convention found on every real space the default.
+9a. **Novel-view fidelity:** Godot `--fidelity` renders Walk mode at sweeps without their own photo, plus the photo;
+   `tools/compare_fidelity.py` scores SSIM/PSNR. Change the shaders only for a measured gain, and port each gain to
+   all three shader sets.
 9c. **Web version:**
    - The browser can't call Matterport (no CORS), so an ASP.NET Core server reuses the Core to download spaces and
      prepare a per-space bundle.
@@ -146,7 +150,12 @@ Web: server (ASP.NET Core, the Core natively: download, bundle, BVH + features) 
   - Transform the fragment's direction from the sweep into panorama-local space and pick the major axis.
   - A per-face lookup table (right/up vectors plus slice index) comes from `calibration.json`.
   - Sample a 6-slice `Texture2DArray` with **analytic UV gradients** from the continuous direction derivatives,
-    so mip selection has no seams at face edges.
+    so mip selection has no seams at face edges. Within ~2 footprints of a face edge, sample with an explicit LOD
+    (log2 of the same footprint) instead: gradient sampling there draws a dashed line along the seam.
+  - **Occlusion:** point-sample the depth cube at the 4 nearest texels, run the visibility test on each and blend
+    the 4 results bilinearly (percentage-closer filtering). Bilinear depth mixes near and far at silhouettes and
+    dots every outline; unweighted 2×2 tests make blocks. Skip the test while the camera stands on the shown sweep:
+    nothing it sees is hidden, and the depth map's resolution would only draw thin lines along outlines.
   - At a sweep the result is exactly the photo; geometry only matters while moving.
   - Blend weights give B its share as the transition progresses (`t`). Each panorama takes over where the other
     is occluded, using space-aligned depth cubes ray-cast on worker threads, and falls back to the baked mesh
@@ -177,7 +186,10 @@ Web: server (ASP.NET Core, the Core natively: download, bundle, BVH + features) 
   - **Sub-steps:** 10 cm each, shorter than the radius, so walls are never crossed.
   - **View:** the photos of the two nearest sweeps in sight, weighted 1/d − 1/d₃ (d₃: the third nearest) with sticky
     slots. A sweep joins or leaves the pair at zero weight, so there are no pops; the depth cubes handle occlusion.
-  - **Eye height:** the capture camera's height above its floor.
+  - **Eye height:** the capture camera's height above its floor: the first walkable surface 1-2.5 m below the
+    camera (a ray straight down often lands on a table top under the tripod), then a ring search for room to stand.
+  - **Fidelity:** score Walk mode leave-one-out (at a sweep, render without its photo; SSIM/PSNR against the photo)
+    and check the camera really stands at the photo's spot before trusting a score.
 - **Transitions:** move the camera linearly with an ease curve, cross-fade with smoothstep(0.1–0.9), and preload
   the target panorama (small tier first). Mode changes fly between poses, fading projection out early when
   leaving a sweep and in late when arriving.
@@ -258,6 +270,20 @@ Web: server (ASP.NET Core, the Core natively: download, bundle, BVH + features) 
 - **Script order:** a component that reads another's per-frame result (measure reads `Navigator.Clicked`) needs
   `[DefaultExecutionOrder]`; Unity's order is otherwise undefined.
 - **The default `ViewBinding` (all zeros) clips everything above y = 0.** Start from `ViewBinding.None`.
+- **Rendering fixes need measurements, not impressions** (`--fidelity` + `compare_fidelity.py`):
+  - The dashed seam lines looked like mesh cracks or T-junctions; the mesh was fine (19 T-junction edges in a
+    whole house). The cause was gradient sampling at panorama face seams; isotropic gradients didn't fix it, an
+    explicit LOD did.
+  - A finer mesh (Matterport's 3D tiles, 2.4× the triangles, 4096 px textures) rendered no better: the photos
+    dominate. Don't render it for looks; it is for collision and reconstruction.
+  - The first scores were wrong because the camera stood on a table top (the floor ray hit furniture): log the
+    camera's offset from the photo's spot and require 0.
+- **Draco in C#** (Matterport's tiles): only the sequential decoder is needed (no edgebreaker), with quantized
+  attributes, difference prediction with the wrap transform, rANS tagged and raw symbols. rANS precision is
+  clamp(⌊3·bits/2⌋, 12, 20) bits and the state base is 4× the precision. Validate against Google's draco3d (npm)
+  value by value; a test fixture is easy to make with draco3d's encoder from a procedural grid.
+- **Signed tile links expire in ~5 minutes** (HTTP 410): download tiles right after the GraphQL query, before the
+  panoramas.
 - **Unplaced 360° photos** (no neighbours, no floor below, sometimes positioned at floor level) can't be walked from.
   Check that the body can stand before entering Walk mode.
 - **Test walking on real scans in a scratch harness** (a console project compiling `Runtime/Core`):

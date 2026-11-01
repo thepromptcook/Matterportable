@@ -194,9 +194,11 @@ photo. While moving, it cross-fades between the panoramas of the two sweeps, bot
 That is the same transition Matterport uses.
 
 Matterportable adds **occlusion awareness**. Depth maps rendered from each sweep let surfaces hidden from one sweep
-take their colour from the other, or from the baked mesh texture, instead of smearing. Areas without geometry
-(windows, outdoors) show the panorama as the sky. Dollhouse and Floor plan render the textured mesh with back-face
-culling, so you see into the rooms.
+take their colour from the other, or from the baked mesh texture, instead of smearing. The occlusion test is
+filtered per pixel, so object outlines stay clean, and panorama seams are sampled so they don't show as lines.
+These rendering choices were measured, not guessed: Walk mode is rendered at sweeps without their own photo and
+scored against the photo. Areas without geometry (windows, outdoors) show the panorama as the sky. Dollhouse and
+Floor plan render the textured mesh with back-face culling, so you see into the rooms.
 
 **Why it should survive Matterport's undocumented formats.** Rather than hard-coding guesses, the importer measures
 its assumptions against the data:
@@ -218,7 +220,7 @@ its assumptions against the data:
 | *"Matterport's bot protection blocked the request"* | Matterport challenged requests from your network. Try again later or from another network. |
 | Panoramas look rotated, mirrored or don't line up with the mesh | Inspector ▸ **Re-run Panorama Alignment**. If it stays wrong, send **Copy Diagnostics**. `calibration.json` in the space folder can also be edited by hand; set `"method": "manual"` so it's kept. |
 | Download, decode or display problem | Click **Copy Diagnostics** in the space's inspector and paste the report into your issue or chat. The raw files are in `MatterportCache/<id>/debug/`. |
-| "Space only offers streamed mesh tiles" | Newer spaces may only have 3D-tile meshes, which aren't supported yet. The space still works panorama-only: click navigation with transitions, skybox rendering. |
+| "Space only offers Matterport's 3D-tile mesh" | The tiles are downloaded (`tiles/` in the space folder), but the viewers don't show them yet. The space still works panorama-only: click navigation with transitions, skybox rendering. |
 | Pink / black surfaces | The project uses HDRP, which isn't supported. Use the Built-in render pipeline or URP. |
 
 ## Repository layout
@@ -292,7 +294,9 @@ dotnet run --project tools/Matterportable.Cli -- diagnose MatterportCache/rGMMnZ
   (re-run alignment, Copy Diagnostics) have no Godot equivalent yet; use the Unity inspector or the CLI `diagnose`
   command, which work on the same cache folder.
 - **Platforms:** desktop is the target. Mobile and WebGL are untested (WebGL can't use the downloader).
-- **Mesh tiles:** streamed 3D-tile meshes aren't decoded yet.
+- **Mesh tiles:** Matterport's finer 3D-tile mesh is downloaded and decoded (Draco), but not shown: it rendered no
+  better than the standard mesh, because the photos carry the detail. Spaces that offer only tiles are
+  panorama-only.
 - **Tiled panoramas:** the importer handles tiled faces, but assumes tile rows count from the top of the face.
 
 ## Responsible use

@@ -57,6 +57,28 @@ The server is graphql-java style. Validation errors carry a line/column location
 - **Textures:** chunk material names map to texture files through the `<texture>` placeholder, as a zero-padded
   3-digit index.
 
+## Mesh tiles (3D Tiles; confirmed on rGMMnZDh3Tf)
+
+- **Where:** `assets.tilesets[]` has `url` and `urlTemplate`; the template contains `<file>`, a path relative to
+  `tileset.json` (`template.Replace("<file>", "tileset.json")`). The signed tokens **expire in about 5 minutes**
+  (then HTTP 410), much faster than other assets, so the downloader fetches tiles right after the mesh.
+- **Tileset:** a root without content, then levels `0/lod0_…glb` (geometric error 0.18) → `1/lod1` (0.09) →
+  `2/lod2` (0.045) → `3/lod3_room0_chunk<n>.glb` (0.02), REPLACE refinement, so the leaves (lod3) cover the
+  model. The house has 8 leaves: 136,723 triangles (2.4× the 50k DAM's 57.5k), 2.2 MB of GLB.
+- **GLB:** glTF 2.0, one Draco primitive per texture, `KHR_draco_mesh_compression` with Draco bitstream 2.2,
+  **sequential** encoding (not edgebreaker), one attribute decoder with quantized POSITION and TEXCOORD_0,
+  difference prediction with the wrap transform, rANS symbols (tagged and raw schemes both occur), uncompressed
+  UI16 indices. `Draco.cs` decodes exactly this (checked against Google's draco3d: 0 mismatches, 37 ms per tile).
+- **Textures:** `KHR_texture_basisu` (`.ktx2`), but a **JPEG of the same name** sits next to each tile at
+  4096 × 4096 (8 of them: 19 MB).
+- **Frame:** glTF Y-up right-handed; Core = (x, y, −z), v → 1 − v, swap two indices per triangle. The result lies
+  within ~1 cm of the 50k DAM after calibration.
+- **Older spaces have no tilesets** (the three IU tours). Their `dam 500k` is HTTP 403 even when its status says
+  available, and `tesselate.dam` is a placeholder, so the 50k DAM is the only mesh for them.
+- **Rendering it changed nothing measurable:** Walk mode from the tiles scored SSIM 0.636 against 0.639 with the
+  50k mesh (see the dev skill's fidelity check): the photos dominate, and the mesh texture only shows in the few
+  percent the photos don't cover. Kept for reconstruction (finer object outlines), not shown.
+
 ## Panoramas
 
 - **Faces:** six faces per sweep from the `urlTemplate` with `<face>` = 0..5. Sizes: 512 (preview and solver
@@ -72,6 +94,8 @@ The server is graphql-java style. Validation errors carry a line/column location
 - `calibration.json`
 - `mesh/*.dam`
 - `textures/*.jpg`
+- `tiles/` (when the space has a tileset): `tileset.json`, `3/lod3_*.glb` and their 4096 px JPEGs; listed in the
+  manifest's `tiles`
 - `panos/<sweep>/<size>/face0..5.jpg`
 - `debug/`, holding `graph-query.graphql`, `graph-response.json`, `graph-pruned-fields.txt`, `load.log`,
   `dam-structure.txt` and `diagnostics.txt`
