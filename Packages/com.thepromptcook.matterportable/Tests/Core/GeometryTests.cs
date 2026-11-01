@@ -92,10 +92,13 @@ namespace Matterportable.Tests
             var floor = new[] { new Vec3(-50, -1.5f, -50), new Vec3(50, -1.5f, -50), new Vec3(50, -1.5f, 50), new Vec3(-50, -1.5f, 50) };
             var bvh = new Bvh(floor, new[] { 0, 1, 2, 0, 2, 3 });
             const int size = 8;
-            var depth = CubeFaces.DepthCube(bvh, Vec3.Zero, size);
-            int centre = (size / 2) * size + size / 2;
-            Assert.AreEqual(1.5f, HalfFloat.ToFloat(depth[3 * size * size + centre]), 0.1f);
-            Assert.AreEqual(1000f, HalfFloat.ToFloat(depth[2 * size * size + centre]), 1f);
+            var depth = CubeFaces.DepthCube(bvh, Vec3.Zero, size, new[] { 0, 7 });
+            int centre = (size / 2) * size + size / 2, down = 2 * (3 * size * size + centre), up = 2 * (2 * size * size + centre);
+            Assert.AreEqual(1.5f, HalfFloat.ToFloat(depth[down]), 0.1f);
+            Assert.AreEqual(1000f, HalfFloat.ToFloat(depth[up]), 1f);
+            var hit = bvh.Raycast(Vec3.Zero, Vec3.Down, 5f, out var h) ? h.Triangle : -1;
+            Assert.AreEqual(hit == 1 ? 7f : 0f, HalfFloat.ToFloat(depth[down + 1]), "the second channel: the piece of the triangle seen");
+            Assert.AreEqual(0f, HalfFloat.ToFloat(depth[up + 1]), "nothing seen: the room");
         }
 
         [Test]

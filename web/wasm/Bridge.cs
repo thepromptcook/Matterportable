@@ -94,7 +94,7 @@ public static partial class Bridge
     /// depth A, B, pose A, B, blend, projection, use depth, debug view, valid A, B, clip height, floor count, view clip
     /// height, active loads, queued, marker count, markers (position, normal, radius, rgba, inner, fill), command
     /// count, commands (see <see cref="PageLoader"/>), highlighted prop, prop flags (1 carrying, 2 drop refused), prop
-    /// count, props (translation xyz, rotation xyzw, tint rgba)].
+    /// count, props (translation xyz, rotation xyzw, tint rgba, moved)].
     /// </summary>
     [JSExport]
     public static double[] Frame(double[] i)
@@ -130,7 +130,7 @@ public static partial class Bridge
         {
             var pose = props.Poses[p];
             var tint = props.Tint(p, n.HighlightProp, v.DebugView);
-            o.AddRange(new double[] { pose.Translation.X, pose.Translation.Y, pose.Translation.Z, pose.Rotation.X, pose.Rotation.Y, pose.Rotation.Z, pose.Rotation.W, tint.R, tint.G, tint.B, tint.A });
+            o.AddRange(new double[] { pose.Translation.X, pose.Translation.Y, pose.Translation.Z, pose.Rotation.X, pose.Rotation.Y, pose.Rotation.Z, pose.Rotation.W, tint.R, tint.G, tint.B, tint.A, props.Moved(p) ? 1 : 0 });
         }
         return o.ToArray();
     }
@@ -168,13 +168,7 @@ public static partial class Bridge
     [JSExport] public static string PropHint() => ViewerText.PropHint(_nav) ?? "";
 
     /// <summary>Which piece each triangle is drawn with (geometry.bin's order): 0 the room, i + 1 prop i.</summary>
-    [JSExport]
-    public static int[] PropOwners()
-    {
-        var owners = new int[_model.Geometry?.TriangleCount ?? 0];
-        for (int i = 0; i < _model.Props.Count; i++) foreach (int t in _model.Props[i].Triangles) owners[t] = i + 1;
-        return owners;
-    }
+    [JSExport] public static int[] PropOwners() => _model.PieceOfTriangle;
 
     // ------------------------------------------------------------------ measure mode (Core MeasureTool)
 

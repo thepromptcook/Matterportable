@@ -136,8 +136,8 @@ You walk at the height the photos were taken from, and the scanned mesh is solid
   stays in front of you, short of walls, and you put it down on whatever is below it (the floor, or a table). It
   keeps its own photo, and it blocks you where you leave it. The pieces are found automatically the first time a
   space opens (saved in `objects.json` next to it); F2 → *Props* colours every piece that can move. Where something
-  stood, the room shows what the scan has there, which is often a smear of the object, because no photo saw behind
-  it.
+  stood, no photo ever saw the floor and wall behind it: that spot is filled from the photo's surroundings, which
+  reads as empty floor and wall up close, with a soft smear rather than detail.
 
 **Measure mode** works like Matterport's: click to place points. With *Continuous lines* on (the default), each click
 adds a connected segment; **Esc** or **✓ Confirm** ends the line, and Esc again leaves measure mode. Points snap to

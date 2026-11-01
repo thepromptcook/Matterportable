@@ -41,6 +41,8 @@ namespace Matterportable
         readonly Dictionary<string, ShaderMaterial> _partMaterials = new Dictionary<string, ShaderMaterial>();
         readonly List<MeshInstance3D> _propMeshes = new List<MeshInstance3D>(); // per prop (null: nothing to draw)
         Color[] _propTints = System.Array.Empty<Color>();
+        readonly Vector4[] _moved = new Vector4[64]; // 1 per prop that has moved (prop i: element i / 4, component i % 4)
+        int _movedCount = -1;
         Texture2DArray _empty;
         CancellationTokenSource _cts;
         BufferLog _log = new BufferLog();
@@ -194,6 +196,7 @@ namespace Matterportable
                     Name = piece == 0 ? "Matterport Mesh" : "Prop " + (piece - 1), Mesh = mesh, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
                 };
                 if (instance != null) AddChild(instance);
+                if (piece > 0) instance?.SetInstanceShaderParameter("prop_id", (float)piece); // a float (an int is ignored); the depth cubes record the piece seen
                 if (piece > 0) _propMeshes.Add(instance);
             }
             _propTints = new Color[_propMeshes.Count];
@@ -293,6 +296,18 @@ namespace Matterportable
                 m.SetShaderParameter("space_matrix", GlobalTransform);
             }
             if (Props == null) return;
+            int moved = 0;
+            for (int i = 0; i < 256; i++)
+            {
+                bool m = i < Props.Props.Count && Props.Moved(i);
+                _moved[i >> 2][i & 3] = m ? 1f : 0f;
+                moved += m ? i + 1 : 0;
+            }
+            if (moved != _movedCount) // which props have moved changed
+            {
+                _movedCount = moved;
+                foreach (var m in _materials) m.SetShaderParameter("moved_props", _moved);
+            }
             for (int i = 0; i < _propMeshes.Count; i++)
             {
                 if (_propMeshes[i] == null) continue;

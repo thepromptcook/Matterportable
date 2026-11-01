@@ -89,7 +89,7 @@ export class MatterportNavigator {
     f.highlightProp = o[i++];
     f.propFlags = o[i++]; // 1 carrying, 2 drop refused
     f.props = [];
-    for (let k = o[i++]; k > 0; k--, i += 11) f.props.push(o.slice(i, i + 11));
+    for (let k = o[i++]; k > 0; k--, i += 12) f.props.push(o.slice(i, i + 12)); // translation, rotation, tint, moved
     return f;
   }
 

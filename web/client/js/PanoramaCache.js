@@ -16,9 +16,15 @@ export class PanoramaCache {
     this.disposed = false;
     const r = space.renderer;
     this.depthSupported = r.extensions.has('EXT_color_buffer_float') || r.extensions.has('EXT_color_buffer_half_float');
-    this.depthMaterial = new THREE.ShaderMaterial({
-      vertexShader: worldVertex, fragmentShader: depthFragment, glslVersion: THREE.GLSL3,
-      uniforms: { sweepPos: { value: new THREE.Vector3() }, spaceMatrix: { value: new THREE.Matrix4() } }, side: THREE.DoubleSide,
+    // The depth cubes see the scan as photographed: every piece where it was scanned, each writing its piece id.
+    this.depthUniforms = { sweepPos: { value: new THREE.Vector3() }, spaceMatrix: { value: new THREE.Matrix4() } };
+    this.depthMaterials = (space.pieceGeometries ?? []).map(({ geometry, piece }) => {
+      const material = new THREE.ShaderMaterial({
+        vertexShader: worldVertex, fragmentShader: depthFragment, glslVersion: THREE.GLSL3,
+        uniforms: { ...this.depthUniforms, pieceId: { value: piece } }, side: THREE.DoubleSide,
+      });
+      space.depthScene.add(new THREE.Mesh(geometry, material));
+      return material;
     });
   }
 
@@ -92,10 +98,9 @@ export class PanoramaCache {
     const camera = new THREE.CubeCamera(0.03, 1000, target);
     const pos = this.space.sweeps[sweep].position;
     camera.position.copy(pos);
-    this.depthMaterial.uniforms.sweepPos.value.copy(pos);
+    this.depthUniforms.sweepPos.value.copy(pos);
     const r = this.space.renderer, clear = r.getClearColor(new THREE.Color()), alpha = r.getClearAlpha();
     r.setClearColor(new THREE.Color(1000, 0, 0), 1); // "nothing there" = far away
-    this.space.depthScene.overrideMaterial = this.depthMaterial;
     camera.update(r, this.space.depthScene);
     r.setClearColor(clear, alpha);
     this.depth.get(sweep)?.dispose();
@@ -113,6 +118,6 @@ export class PanoramaCache {
   dispose() {
     this.disposed = true;
     for (const s of [...this.faces.keys(), ...this.depth.keys()]) this.unload(s);
-    this.depthMaterial.dispose();
+    this.depthMaterials.forEach((m) => m.dispose());
   }
 }

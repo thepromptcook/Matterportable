@@ -205,6 +205,14 @@ Web: server (ASP.NET Core, the Core natively: download, bundle, BVH + features) 
     space matrix), so the prop carries its own pixels wherever it goes.
   - **Colliding:** the room's BVH with a skip mask over prop triangles, plus a small BVH per prop queried through
     the inverse pose. No second room BVH (WebAssembly would take seconds to build it).
+  - **What it leaves behind:** store the piece each sweep saw next to the depth (an item buffer). The depth test's
+    bias (~12 cm) can't separate a chair from the wall behind it; the piece can. Refuse a moved prop's pixels for
+    other pieces (any of the four PCF taps, which also drops the outline at depth-texel resolution), and fill the hole
+    with the photo's nearest other pixels (rings of 8 directions, 2° to 30°, at a coarse mip). Matterport's baked
+    texture behind furniture holds a smear of it, so it is a poor fallback there.
+  - **Growing the pieces:** furniture touching a wall loses those parts (wall columns). Add connected triangles
+    within the bounds + 8 cm, but only non-vertical ones: vertical ones took bits of the wall (a hole in the wall
+    showing the photo through it, and a wall patch carried with the chair).
 - **Transitions:** move the camera linearly with an ease curve, cross-fade with smoothstep(0.1–0.9), and preload
   the target panorama (small tier first). Mode changes fly between poses, fading projection out early when
   leaving a sweep and in late when arriving.
@@ -304,6 +312,8 @@ Web: server (ASP.NET Core, the Core natively: download, bundle, BVH + features) 
   Unity's unset global matrix is all zeros (the shader falls back to the object matrix while `_m33` is 0); Q/E
   already turn, so interaction is F. A scripted check must wait until the camera has its view: the first frame's
   pointer ray still has the old rotation.
+- **Godot instance uniforms:** `SetInstanceShaderParameter("prop_id", 3)` with an int is silently ignored by a
+  `float` uniform; pass `3f`.
 - **Dropping onto the player:** the body's sphere test pushes it up onto the furniture (standing on the table).
   Test the dropped prop against the body first and refuse.
 - **Signed tile links expire in ~5 minutes** (HTTP 410): download tiles right after the GraphQL query, before the

@@ -28,6 +28,7 @@ export class MatterportSpace {
       mpState: { value: new THREE.Vector4() }, mpValid: { value: new THREE.Vector4(0, 0, 1e9, 0) },
       mpBackground: { value: new THREE.Vector3() },
       depthA: { value: null }, depthB: { value: null }, cullBack: { value: false }, spaceMatrix: { value: new THREE.Matrix4() },
+      movedProps: { value: Array.from({ length: 64 }, () => new THREE.Vector4(0, 0, 0, 0)) }, // 1 per prop that has moved
     };
     this.props = []; // per prop: { mesh, tint } (null: nothing to draw)
     for (const p of ['A', 'B']) for (let i = 0; i < 6; i++) this.uniforms[`pano${p}${i}`] = { value: this.gray };
@@ -81,12 +82,12 @@ export class MatterportSpace {
     const positions = new THREE.BufferAttribute(pos, 3);
     const uvs = new THREE.BufferAttribute(hasUvs ? new Float32Array(slice(uvStart, vertices * 8)) : new Float32Array(vertices * 2), 2);
     const index = new Uint32Array(slice(indexStart, indexCount * 4));
-    const material = (meshTex, propTint) => new THREE.ShaderMaterial({
+    const material = (meshTex, propTint, piece) => new THREE.ShaderMaterial({
       vertexShader: worldVertex, fragmentShader: meshFragment, glslVersion: THREE.GLSL3, side: THREE.DoubleSide,
-      uniforms: { ...this.uniforms, meshTex, propTint },
+      uniforms: { ...this.uniforms, meshTex, propTint, propId: { value: piece } },
     });
     const noTint = () => ({ value: new THREE.Vector4(0, 0, 0, 0) }); // (a THREE.Vector4's w defaults to 1)
-    this.materials = info.parts.map(() => material({ value: this.gray }, noTint()));
+    this.materials = info.parts.map(() => material({ value: this.gray }, noTint(), 0));
     // The room and each prop (Core SpaceModel.MeshPieces' split): geometries sharing the vertex buffers, a group per part.
     const owners = this.core.PropOwners(), pieces = [];
     info.parts.forEach((p, part) => {
@@ -110,18 +111,15 @@ export class MatterportSpace {
     };
     this.mesh = build(pieces[0] ?? info.parts.map(() => []), (part) => this.materials[part]);
     this.root.add(this.mesh);
+    this.pieceGeometries = [{ geometry: this.mesh.geometry, piece: 0 }]; // the depth cubes draw these where scanned
     for (let k = 1; k < pieces.length; k++) {
       if (!pieces[k]) { this.props.push(null); continue; }
       const tint = noTint();
-      const mesh = build(pieces[k], (part) => material(this.materials[part].uniforms.meshTex, tint));
+      const mesh = build(pieces[k], (part) => material(this.materials[part].uniforms.meshTex, tint, k));
       this.root.add(mesh);
       this.props.push({ mesh, tint });
+      this.pieceGeometries.push({ geometry: mesh.geometry, piece: k });
     }
-    // The depth cubes see the scan as it was photographed: every triangle where it was scanned.
-    const scanned = new THREE.BufferGeometry();
-    scanned.setAttribute('position', positions);
-    scanned.setIndex(new THREE.BufferAttribute(index, 1));
-    this.depthScene.add(new THREE.Mesh(scanned));
   }
 
   /** Drawn last at the far plane with the depth test, so only pixels the mesh leaves uncovered pay for it. */
@@ -174,6 +172,8 @@ export class MatterportSpace {
     u.cullBack.value = !!(f.flags & 16);
     u.spaceMatrix.value.copy(this.root.matrixWorld);
     // Walk mode's props where the Core has them (Core frame -> three: mirror Z), tinted as it says.
+    const moved = u.movedProps.value;
+    for (let k = 0; k < 256; k++) moved[k >> 2].setComponent(k & 3, f.props[k]?.[11] ?? 0);
     this.props.forEach((pr, k) => {
       const p = f.props[k];
       if (!pr || !p) return;

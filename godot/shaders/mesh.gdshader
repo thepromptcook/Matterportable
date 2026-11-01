@@ -12,6 +12,8 @@ uniform bool cull_back = false;
 uniform mat4 space_matrix = mat4(1.0);
 // Walk mode's highlight of the prop under the pointer, and the "Props" render view (alpha: how much).
 instance uniform vec4 prop_tint = vec4(0.0);
+// Which piece this is: 0 the room, i + 1 prop i (the depth cubes record the piece each sweep saw).
+instance uniform float prop_id = 0.0;
 
 varying vec3 wpos;
 
@@ -33,16 +35,26 @@ void fragment() {
 
 	float visA = mp_valid.x;
 	float visB = mp_valid.y;
+	bool holeA = false; // a moved prop hid this point from sweep A
 	if (mp_state.z > 0.5) {
-		visA *= mp_depth_visibility(depth_a, dA);
-		visB *= mp_depth_visibility(depth_b, dB);
+		float a = mp_depth_visibility(depth_a, dA, prop_id), b = mp_depth_visibility(depth_b, dB, prop_id);
+		holeA = a < 0.0;
+		visA *= max(a, 0.0);
+		visB *= max(b, 0.0);
 	}
 
 	float wA, wB;
 	mp_blend_weights(mp_state.x, visA, visB, wA, wB);
 	vec3 pano = (cA * wA + cB * wB) / max(wA + wB, 1e-5);
 	float coverage = clamp(max(visA, visB), 0.0, 1.0);
-	vec3 col = mix(tex, mix(tex, pano, coverage), mp_state.y);
+	// Where a moved prop hid this from the photo, fill from the photo's surroundings rather than the baked texture.
+	vec3 fallback = tex;
+	if (holeA && coverage < 1.0) {
+		float found;
+		vec3 fill = mp_hole_fill(pano_a, depth_a, dA, rot_a, prop_id, found);
+		if (found > 0.0) fallback = fill;
+	}
+	vec3 col = mix(tex, mix(fallback, pano, coverage), mp_state.y);
 
 	int view = int(mp_state.w + 0.5);
 	if (view == 1) col = tex;

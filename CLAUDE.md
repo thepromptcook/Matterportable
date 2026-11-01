@@ -158,7 +158,7 @@ navigator.
 - **Panorama and depth sampling** (all three shader sets, measured with `--fidelity`): panoramas go through
   `MP_SamplePano` (gradients, but an explicit LOD along face edges, or seams draw dashed lines); occlusion goes
   through `MP_DepthVisibility` (the test on 4 point-sampled depth texels, blended), so depth textures stay
-  point-sampled. `UseDepth` is off while the camera stands on the shown sweep.
+  point-sampled (two half floats: distance, piece seen). `UseDepth` is off while the camera stands on the shown sweep.
 - **Settings** are a `ViewerSettings` field on `MatterportSpace` (inspector), read live by the Core objects. In Play
   mode `OnValidate` copies inspector edits into the instance the Core holds, in case Unity replaced it.
 - **Domain reload is off** (fast Enter Play Mode, set by the project setup), so statics survive between Play sessions.
@@ -194,6 +194,12 @@ navigator.
     refused (`DropRefused`, the hint says so). Collision: `PropWorld` is the Walker's `ICollider`, the room's BVH
     with prop triangles skipped (a mask, no second BVH) plus each prop's own BVH through its pose. Depth cubes and
     Inside-mode picking keep the scan as photographed. Once anything moved, the depth test stays on even at a sweep.
+  - **What a moved prop leaves behind:** depth cubes have a second channel, the piece each sweep saw
+    (`CubeFaces.DepthCube(…, SpaceModel.PieceOfTriangle)`; Unity RGHalf, Godot Rgh, web: each piece drawn into the
+    cube with its `pieceId`). The shaders refuse a moved prop's photo pixels for any other piece (`MP_Hides`, moved
+    flags in `_MP_Moved` / `moved_props` / `movedProps`, the drawn piece in `_MP_PropId` / `prop_id` (pass a float in
+    Godot: an int is ignored) / `propId`), and fill the hole from the photo's surroundings (`MP_HoleFill`: rings of
+    directions around the hole, coarse mip) instead of the baked texture, which holds the prop.
 - **Measurement** behaviour (clicks, Escape, snapping, axes, units, what shows in which view, colours and line
   widths) lives only in Core `MeasureTool`; the engine files feed it the pointer ray and draw the screen-space
   `MeasureOverlay` items (line, dot, ring, label). While measuring, `Navigator.Measuring` hides markers and leaves

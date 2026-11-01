@@ -5,7 +5,17 @@
 const faceSamplers = (p) => [0, 1, 2, 3, 4, 5].map((i) => `uniform sampler2D pano${p}${i};`).join('\n');
 // samplePanoA/B(l): the panorama's colour in the panorama-local direction l (see mpSeamLod).
 const faceSample = (p, i) => `lod < 0.0 ? textureGrad(pano${p}${i}, uv, gx, gy).rgb : textureLod(pano${p}${i}, uv, lod).rgb`;
-const faceSwitch = (p) => `vec3 samplePano${p}(vec3 l) {
+const faceSwitch = (p) => `vec3 samplePano${p}Lod(vec3 l, float lod) {
+  int s; vec2 uv, gx, gy;
+  mpPanoCoords(l, vec3(0.0), vec3(0.0), s, uv, gx, gy);
+  if (s == 0) return ${faceSample(p, 0)};
+  if (s == 1) return ${faceSample(p, 1)};
+  if (s == 2) return ${faceSample(p, 2)};
+  if (s == 3) return ${faceSample(p, 3)};
+  if (s == 4) return ${faceSample(p, 4)};
+  return ${faceSample(p, 5)};
+}
+vec3 samplePano${p}(vec3 l) {
   int s; vec2 uv, gx, gy;
   mpPanoCoords(l, dFdx(l), dFdy(l), s, uv, gx, gy);
   float lod = mpSeamLod(uv, gx, gy, float(textureSize(pano${p}0, 0).x));
@@ -30,6 +40,7 @@ uniform vec4 faceUp[6];
 uniform vec4 mpState;       // x: blend A->B, y: projection amount, z: use depth, w: debug view
 uniform vec4 mpValid;       // x: pano A loaded, y: pano B loaded, z: clip height (world y)
 uniform vec3 mpBackground;
+uniform vec4 movedProps[64]; // 1 for each prop that has moved (prop i: element i / 4, component i % 4)
 
 vec3 toCore(vec3 d) { return vec3(d.x, d.y, -d.z); }
 
@@ -88,9 +99,24 @@ vec3 mpCubeDir(int face, vec2 sc) {
   return vec3(-sc.x, -sc.y, -1.0);
 }
 
+float mpMoved(float piece) {
+  int i = int(piece + 0.5) - 1;
+  if (i < 0 || i >= 256) return 0.0;
+  vec4 v = movedProps[i / 4];
+  int c = i % 4;
+  return c == 0 ? v.x : c == 1 ? v.y : c == 2 ? v.z : v.w;
+}
+
+// A depth texel (distance, piece seen) hides the point when it shows a moved prop other than the piece drawn: the
+// surfaces the prop stood in front of were never photographed.
+bool mpHides(vec2 texel, float piece) {
+  return abs(texel.y - piece) > 0.5 && mpMoved(texel.y) > 0.5;
+}
+
 // Percentage-closer filtering, as MP_DepthVisibility in Unity and Godot: the visibility test on the four nearest texels
-// of the depth cube (point-sampled), blended bilinearly. w: the direction from the sweep in three's frame.
-float mpDepthVisibility(samplerCube depth, vec3 w, float dist) {
+// of the depth cube (point-sampled), blended bilinearly. w: the direction from the sweep in three's frame; piece: what
+// is being drawn (0 the room, i + 1 prop i). -1 when a moved prop hid the point (any of the four texels).
+float mpDepthVisibility(samplerCube depth, vec3 w, float dist, float piece) {
   vec3 a = abs(w);
   int face; float ma; vec2 sc;
   if (a.x >= a.y && a.x >= a.z) { face = w.x >= 0.0 ? 0 : 1; ma = a.x; sc = vec2(w.x >= 0.0 ? -w.z : w.z, -w.y); }
@@ -99,11 +125,10 @@ float mpDepthVisibility(samplerCube depth, vec3 w, float dist) {
   float size = float(textureSize(depth, 0).x);
   vec2 t = (0.5 * sc / ma + 0.5) * size - 0.5, f = fract(t), base = (floor(t) + 0.5) / size * 2.0 - 1.0;
   vec2 step = vec2(2.0 / size, 0.0);
-  float v00 = mpVisibility(textureLod(depth, mpCubeDir(face, base), 0.0).r, dist);
-  float v10 = mpVisibility(textureLod(depth, mpCubeDir(face, base + step.xy), 0.0).r, dist);
-  float v01 = mpVisibility(textureLod(depth, mpCubeDir(face, base + step.yx), 0.0).r, dist);
-  float v11 = mpVisibility(textureLod(depth, mpCubeDir(face, base + step.xx), 0.0).r, dist);
-  return mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
+  vec2 t00 = textureLod(depth, mpCubeDir(face, base), 0.0).rg, t10 = textureLod(depth, mpCubeDir(face, base + step.xy), 0.0).rg;
+  vec2 t01 = textureLod(depth, mpCubeDir(face, base + step.yx), 0.0).rg, t11 = textureLod(depth, mpCubeDir(face, base + step.xx), 0.0).rg;
+  if (mpHides(t00, piece) || mpHides(t10, piece) || mpHides(t01, piece) || mpHides(t11, piece)) return -1.0;
+  return mix(mix(mpVisibility(t00.x, dist), mpVisibility(t10.x, dist), f.x), mix(mpVisibility(t01.x, dist), mpVisibility(t11.x, dist), f.x), f.y);
 }
 
 void mpBlendWeights(float t, float visA, float visB, out float wA, out float wB) {
@@ -129,6 +154,7 @@ export const meshFragment = `
 ${common}
 uniform sampler2D meshTex;
 uniform vec4 propTint;      // Walk mode: the prop under the pointer, or every prop in the "Props" view (alpha: how much)
+uniform float propId;       // which piece this is: 0 the room, i + 1 prop i (the depth cubes record the piece seen)
 uniform samplerCube depthA;
 uniform samplerCube depthB;
 uniform bool cullBack;
@@ -144,15 +170,38 @@ void main() {
   vec3 cB = samplePanoB(dB * rotB);
   float visA = mpValid.x;
   float visB = mpValid.y;
+  bool holeA = false; // a moved prop hid this point from sweep A
   if (mpState.z > 0.5) {
-    visA *= mpDepthVisibility(depthA, vWorld - posA, length(dA));
-    visB *= mpDepthVisibility(depthB, vWorld - posB, length(dB));
+    float a = mpDepthVisibility(depthA, vWorld - posA, length(dA), propId), b = mpDepthVisibility(depthB, vWorld - posB, length(dB), propId);
+    holeA = a < 0.0;
+    visA *= max(a, 0.0);
+    visB *= max(b, 0.0);
   }
   float wA, wB;
   mpBlendWeights(mpState.x, visA, visB, wA, wB);
   vec3 pano = (cA * wA + cB * wB) / max(wA + wB, 1e-5);
   float coverage = clamp(max(visA, visB), 0.0, 1.0);
-  vec3 col = mix(tex, mix(tex, pano, coverage), mpState.y);
+  // Where a moved prop hid this from the photo, fill from the photo's surroundings rather than the baked texture: the
+  // nearest directions (rings of 8, 2° to 30° away) where the sweep saw something else, averaged at a coarse level.
+  vec3 fallback = tex;
+  if (holeA && coverage < 1.0) {
+    vec3 n = normalize(vWorld - posA);
+    vec3 u = normalize(cross(n, abs(n.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+    vec3 v = cross(n, u), sum = vec3(0.0);
+    float found = 0.0;
+    for (int ring = 1; ring <= 7 && found == 0.0; ring++) {
+      float r = 0.012 * float(ring * ring) + 0.02;
+      for (int k = 0; k < 8; k++) {
+        float a = float(k) * 0.7853982 + float(ring) * 0.39;
+        vec3 dir = n + (u * cos(a) + v * sin(a)) * r;
+        if (mpHides(textureLod(depthA, dir, 0.0).rg, propId)) continue;
+        sum += samplePanoALod(toCore(dir) * rotA, 3.0);
+        found += 1.0;
+      }
+    }
+    if (found > 0.0) fallback = sum / found;
+  }
+  vec3 col = mix(tex, mix(fallback, pano, coverage), mpState.y);
   int view = int(mpState.w + 0.5);
   if (view == 1) col = tex;
   else if (view == 2) col = pano;
@@ -185,12 +234,14 @@ void main() {
   mpColor = vec4(mix(mpBackground, pano, coverage), 1.0);
 }`;
 
-// Distance from a sweep to the first surface, rendered into a cube map for the occlusion test.
+// Distance from a sweep to the first surface, and the piece it belongs to, rendered into a cube map for the occlusion
+// test (each piece is drawn with its own pieceId).
 export const depthFragment = `
 layout(location = 0) out highp vec4 mpColor;
 uniform vec3 sweepPos;
+uniform float pieceId;
 varying vec3 vWorld;
-void main() { mpColor = vec4(length(vWorld - sweepPos), 0.0, 0.0, 1.0); }`;
+void main() { mpColor = vec4(length(vWorld - sweepPos), pieceId, 0.0, 1.0); }`;
 
 // Sweep markers and the move cursor: a ring with a soft fill.
 export const markerFragment = `

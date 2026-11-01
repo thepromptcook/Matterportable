@@ -109,21 +109,24 @@ namespace Matterportable.Core
         public static Vec3 Direction(int c, float s, float t) => Canonical[c].Direction(s, t);
 
         /// <summary>
-        /// Occlusion depth cube for a sweep: distance to the first surface per canonical (space-aligned) face texel,
-        /// as half floats in face-major, bottom-up row order, ready to upload (Unity RHalf / Godot Rh texture arrays).
-        /// Runs in parallel; call it from a worker thread.
+        /// The occlusion cube of a sweep: per texel of the canonical faces (row 0 = bottom), two half floats: the
+        /// distance to the first surface (1000 for none) and the piece that surface belongs to
+        /// (<paramref name="pieces"/>, per triangle: 0 the room, i + 1 prop i; 0 without). Shaders test visibility
+        /// with the first, and with the second refuse a moved prop's pixels for anything but that prop.
         /// </summary>
-        public static ushort[] DepthCube(Bvh bvh, Vec3 origin, int size)
+        public static ushort[] DepthCube(Bvh bvh, Vec3 origin, int size, int[] pieces = null)
         {
-            var data = new ushort[6 * size * size];
+            var data = new ushort[2 * 6 * size * size];
             System.Threading.Tasks.Parallel.For(0, 6 * size, row =>
             {
                 int face = row / size, y = row % size;
-                int offset = face * size * size + y * size;
+                int offset = 2 * (face * size * size + y * size);
                 for (int x = 0; x < size; x++)
                 {
                     var dir = Direction(face, (x + 0.5f) / size, (y + 0.5f) / size).Normalized;
-                    data[offset + x] = HalfFloat.FromFloat(bvh.Raycast(origin, dir, 500f, out var hit) ? hit.Distance : 1000f);
+                    bool hit = bvh.Raycast(origin, dir, 500f, out var h);
+                    data[offset + 2 * x] = HalfFloat.FromFloat(hit ? h.Distance : 1000f);
+                    data[offset + 2 * x + 1] = HalfFloat.FromFloat(hit && pieces != null ? pieces[h.Triangle] : 0f);
                 }
             });
             return data;

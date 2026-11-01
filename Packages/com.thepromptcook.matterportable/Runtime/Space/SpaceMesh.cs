@@ -17,7 +17,7 @@ namespace Matterportable
     {
         static readonly int IdCull = Shader.PropertyToID("_Cull");
         static readonly int IdMainTex = Shader.PropertyToID("_MainTex");
-        static readonly int IdPropTint = Shader.PropertyToID("_MP_PropTint");
+        static readonly int IdPropTint = Shader.PropertyToID("_MP_PropTint"), IdPropId = Shader.PropertyToID("_MP_PropId");
 
         readonly List<Mesh> _meshes = new List<Mesh>();
         readonly List<Material> _materials = new List<Material>();
@@ -54,6 +54,7 @@ namespace Matterportable
                 if (p > 0) _props.Add(r);
             }
             _tints = new Vector4[_props.Count];
+            for (int i = 0; i < _props.Count; i++) SetBlock(i, Vector4.zero);
         }
 
         /// <summary>One piece as a compact mesh (only the vertices it uses) on <paramref name="go"/>.</summary>
@@ -120,11 +121,19 @@ namespace Matterportable
                 r.transform.SetPositionAndRotation(Object.transform.TransformPoint(pose.Translation.ToUnity()), Object.transform.rotation * pose.Rotation.ToUnity());
                 var t = props.Tint(i, highlight, debugView);
                 var tint = new Vector4(t.R, t.G, t.B, t.A);
-                if (tint == _tints[i]) continue;
-                _tints[i] = tint;
-                _block.SetVector(IdPropTint, tint); // a vector, not a colour: no gamma conversion
-                r.SetPropertyBlock(_block);
+                if (tint != _tints[i]) SetBlock(i, tint);
             }
+        }
+
+        /// <summary>A prop's per-object shader values: which piece it is (the depth cubes record the piece each sweep saw)
+        /// and its tint (a vector, not a colour: no gamma conversion).</summary>
+        void SetBlock(int i, Vector4 tint)
+        {
+            _tints[i] = tint;
+            if (_props[i] == null) return;
+            _block.SetFloat(IdPropId, i + 1);
+            _block.SetVector(IdPropTint, tint);
+            _props[i].SetPropertyBlock(_block);
         }
 
         public void SetCullMode(CullMode mode)

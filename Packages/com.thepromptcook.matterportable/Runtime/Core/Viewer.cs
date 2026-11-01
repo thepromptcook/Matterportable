@@ -59,7 +59,25 @@ namespace Matterportable.Core
         /// <summary>Each floor's height (the median of its sweeps' floor points).</summary>
         public IReadOnlyList<float> FloorHeights => _floors;
         /// <summary>The pieces of the scan Walk mode can move (<see cref="PropFinder"/>); empty without a mesh.</summary>
-        public IReadOnlyList<Prop> Props { get; set; } = Array.Empty<Prop>();
+        public IReadOnlyList<Prop> Props
+        {
+            get => _props;
+            set { _props = value ?? Array.Empty<Prop>(); _pieceOfTriangle = null; }
+        }
+        IReadOnlyList<Prop> _props = Array.Empty<Prop>();
+        int[] _pieceOfTriangle;
+
+        /// <summary>Per triangle (BVH numbering), the piece it is drawn with: 0 the room, i + 1 prop i.</summary>
+        public int[] PieceOfTriangle
+        {
+            get
+            {
+                if (_pieceOfTriangle != null) return _pieceOfTriangle;
+                var pieces = new int[Geometry?.TriangleCount ?? 0];
+                for (int i = 0; i < _props.Count; i++) foreach (int t in _props[i].Triangles) pieces[t] = i + 1;
+                return _pieceOfTriangle = pieces;
+            }
+        }
         readonly List<float> _floors = new List<float>();
 
         public SpaceModel(SpaceManifest manifest, SpaceCalibration calibration, SpaceGeometry geometry, IReadOnlyList<SweepInfo> sweeps)
@@ -119,8 +137,7 @@ namespace Matterportable.Core
         {
             var pieces = new List<List<(int part, int[] indices)>>();
             if (Geometry == null) return pieces;
-            var owner = new int[Geometry.TriangleCount];
-            for (int i = 0; i < Props.Count; i++) foreach (int t in Props[i].Triangles) owner[t] = i + 1;
+            var owner = PieceOfTriangle;
             for (int i = 0; i <= Props.Count; i++) pieces.Add(new List<(int, int[])>());
             var lists = new List<int>[Props.Count + 1];
             for (int part = 0; part < Geometry.Parts.Count; part++)

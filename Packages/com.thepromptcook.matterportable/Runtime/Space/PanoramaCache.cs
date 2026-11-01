@@ -44,11 +44,12 @@ namespace Matterportable
         public void ComputeDepth(int sweep)
         {
             var bvh = _space.Model.Geometry.Bvh;
+            var pieces = _space.Model.PieceOfTriangle;
             var origin = _space.Model.Sweeps[sweep].Position;
             int size = _space.settings.DepthMapSize;
             Task.Run(() =>
             {
-                try { _depthResults.Enqueue((sweep, CubeFaces.DepthCube(bvh, origin, size), size)); }
+                try { _depthResults.Enqueue((sweep, CubeFaces.DepthCube(bvh, origin, size, pieces), size)); }
                 catch (Exception e) { Debug.LogException(e); }
             });
         }
@@ -65,7 +66,7 @@ namespace Matterportable
         public void Update()
         {
             if (_disposed || !_depthResults.TryDequeue(out var r)) return;
-            var tex = new Texture2DArray(r.size, r.size, 6, TextureFormat.RHalf, false, true)
+            var tex = new Texture2DArray(r.size, r.size, 6, TextureFormat.RGHalf, false, true) // distance, piece seen
             {
                 name = "Matterport depth " + r.sweep,
                 wrapMode = TextureWrapMode.Clamp,
@@ -73,7 +74,7 @@ namespace Matterportable
                 hideFlags = HideFlags.HideAndDontSave,
             };
             int n = r.size * r.size;
-            for (int f = 0; f < 6; f++) tex.SetPixelData(r.depth, 0, f, f * n);
+            for (int f = 0; f < 6; f++) tex.SetPixelData(r.depth, 0, f, f * n * 2);
             tex.Apply(false, true);
             if (_depth.TryGetValue(r.sweep, out var old)) MpUtil.SafeDestroy(old);
             _depth[r.sweep] = tex;

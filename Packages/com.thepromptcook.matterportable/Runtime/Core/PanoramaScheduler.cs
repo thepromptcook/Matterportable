@@ -89,7 +89,7 @@ namespace Matterportable.Core
             get { long b = 0; foreach (var e in _entries.Values) b += Bytes(e); return b; }
         }
 
-        long Bytes(Entry e) => (long)e.Size * e.Size * 4 * 6 * 4 / 3 + (e.Depth ? (long)_settings.DepthMapSize * _settings.DepthMapSize * 2 * 6 : 0);
+        long Bytes(Entry e) => (long)e.Size * e.Size * 4 * 6 * 4 / 3 + (e.Depth ? (long)_settings.DepthMapSize * _settings.DepthMapSize * 4 * 6 : 0); // depth: two half floats
 
         /// <summary>Ask for a sweep at up to maxSize pixels per face. Lower priority loads first.</summary>
         public void Request(int sweep, int maxSize, float priority)

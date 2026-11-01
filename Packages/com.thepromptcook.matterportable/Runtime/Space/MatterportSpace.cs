@@ -66,7 +66,8 @@ namespace Matterportable
         static readonly int IdSpaceRot = Shader.PropertyToID("_MP_SpaceRot"), IdState = Shader.PropertyToID("_MP_State");
         static readonly int IdFaceRight = Shader.PropertyToID("_MP_FaceRight"), IdFaceUp = Shader.PropertyToID("_MP_FaceUp");
         static readonly int IdValid = Shader.PropertyToID("_MP_Valid"), IdBackground = Shader.PropertyToID("_MP_Background");
-        static readonly int IdSpaceToWorld = Shader.PropertyToID("_MP_SpaceToWorld");
+        static readonly int IdSpaceToWorld = Shader.PropertyToID("_MP_SpaceToWorld"), IdMoved = Shader.PropertyToID("_MP_Moved");
+        readonly Vector4[] _moved = new Vector4[64]; // 1 per prop that has moved (prop i: element i / 4, component i % 4)
 
         SpaceMesh _mesh;
         Texture2DArray _empty;
@@ -351,6 +352,8 @@ namespace Matterportable
             Shader.SetGlobalVector(IdValid, new Vector4(v.ValidA ? 1f : 0f, v.ValidB ? 1f : 0f, clip, 0f));
             Shader.SetGlobalColor(IdBackground, settings.BackgroundColor.ToUnity());
             _mesh?.ApplyProps(Props, HighlightProp, v.DebugView);
+            for (int i = 0; i < 256; i++) _moved[i >> 2][i & 3] = Props != null && i < Props.Props.Count && Props.Moved(i) ? 1f : 0f;
+            Shader.SetGlobalVectorArray(IdMoved, _moved);
             if (v.CullBack == _cullBack) return;
             _cullBack = v.CullBack;
             _mesh?.SetCullMode(_cullBack ? CullMode.Back : CullMode.Off);

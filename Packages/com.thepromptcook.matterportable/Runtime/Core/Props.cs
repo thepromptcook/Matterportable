@@ -63,7 +63,7 @@ namespace Matterportable.Core
     /// </summary>
     public static class PropFinder
     {
-        public const int Version = 1;
+        public const int Version = 2;
         const float Cell = 0.05f, Bin = 0.1f;
         const byte Free = 0, Wall = 1, Standing = 2, Hanging = 3;
 
@@ -89,7 +89,80 @@ namespace Matterportable.Core
                 float y1 = f + 1 < levels.Count ? levels[f + 1] : g.BoundsMax.Y + 0.1f;
                 new FloorGrid(g, centre, normalY, levels[f], y1).FindProps(props);
             }
+            GrowAlongMesh(g, normalY, props);
             return props;
+        }
+
+        /// <summary>
+        /// Columns at a wall are wall, so the parts of a piece touching it (a chair's back rail) stay with the room and
+        /// keep showing the piece where it stood. Each prop takes in the connected triangles (sharing a vertex) that lie
+        /// entirely within its bounds plus 8 cm and are not vertical: taking vertical ones took bits of the wall behind
+        /// (a hole in the wall, and a patch of wall carried with the chair).
+        /// </summary>
+        static void GrowAlongMesh(SpaceGeometry g, float[] normalY, List<Prop> props)
+        {
+            if (props.Count == 0) return;
+            var weld = new Dictionary<(int, int, int), int>();
+            var vertexWeld = new int[g.Positions.Length];
+            for (int i = 0; i < vertexWeld.Length; i++)
+            {
+                var p = g.Positions[i];
+                var key = ((int)Math.Round(p.X * 500), (int)Math.Round(p.Y * 500), (int)Math.Round(p.Z * 500));
+                if (!weld.TryGetValue(key, out int w)) weld[key] = w = weld.Count;
+                vertexWeld[i] = w;
+            }
+            var around = new List<int>[weld.Count]; // triangles at each welded vertex
+            int n = g.TriangleCount;
+            for (int t = 0; t < n; t++)
+            {
+                g.TriangleVertices(t, out int a, out int b, out int c);
+                foreach (int v in new[] { a, b, c }) (around[vertexWeld[v]] ?? (around[vertexWeld[v]] = new List<int>(6))).Add(t);
+            }
+            var owner = new int[n];
+            for (int i = 0; i < props.Count; i++) foreach (int t in props[i].Triangles) owner[t] = i + 1;
+            var queue = new Queue<int>();
+            for (int i = 0; i < props.Count; i++)
+            {
+                var p = props[i];
+                var lo = new Vec3(p.Min.X - 0.08f, p.Pivot.Y + 0.02f, p.Min.Z - 0.08f);
+                var hi = new Vec3(p.Max.X + 0.08f, p.Max.Y + 0.05f, p.Max.Z + 0.08f);
+                bool Inside(int v) { var q = g.Positions[v]; return q.X >= lo.X && q.Y >= lo.Y && q.Z >= lo.Z && q.X <= hi.X && q.Y <= hi.Y && q.Z <= hi.Z; }
+                var added = new List<int>(p.Triangles);
+                foreach (int t in p.Triangles) queue.Enqueue(t);
+                while (queue.Count > 0)
+                {
+                    g.TriangleVertices(queue.Dequeue(), out int a, out int b, out int c);
+                    foreach (int v in new[] { a, b, c })
+                        foreach (int u in around[vertexWeld[v]])
+                        {
+                            if (owner[u] != 0 || Math.Abs(normalY[u]) < 0.3f) continue;
+                            g.TriangleVertices(u, out int ua, out int ub, out int uc);
+                            if (!Inside(ua) || !Inside(ub) || !Inside(uc)) continue;
+                            if (normalY[u] > 0.8f && (g.Positions[ua].Y + g.Positions[ub].Y + g.Positions[uc].Y) / 3 - p.Pivot.Y < 0.08f) continue; // floor
+                            owner[u] = i + 1;
+                            added.Add(u);
+                            queue.Enqueue(u);
+                        }
+                }
+                if (added.Count == p.Triangles.Length) continue;
+                added.Sort();
+                p.Triangles = added.ToArray();
+                SetBounds(g, p);
+            }
+        }
+
+        static void SetBounds(SpaceGeometry g, Prop prop)
+        {
+            var min = new Vec3(float.MaxValue, float.MaxValue, float.MaxValue);
+            var max = new Vec3(float.MinValue, float.MinValue, float.MinValue);
+            foreach (int t in prop.Triangles)
+            {
+                g.TriangleVertices(t, out int a, out int b, out int c);
+                min = Vec3.Min(Vec3.Min(Vec3.Min(min, g.Positions[a]), g.Positions[b]), g.Positions[c]);
+                max = Vec3.Max(Vec3.Max(Vec3.Max(max, g.Positions[a]), g.Positions[b]), g.Positions[c]);
+            }
+            prop.Min = min;
+            prop.Max = max;
         }
 
         /// <summary>One floor's columns.</summary>
@@ -383,22 +456,7 @@ namespace Matterportable.Core
                 return count;
             }
 
-            void Bounds(Prop prop)
-            {
-                var min = new Vec3(float.MaxValue, float.MaxValue, float.MaxValue);
-                var max = new Vec3(float.MinValue, float.MinValue, float.MinValue);
-                foreach (int t in prop.Triangles)
-                {
-                    _g.TriangleVertices(t, out int a, out int b, out int c);
-                    foreach (int v in new[] { a, b, c })
-                    {
-                        min = Vec3.Min(min, _g.Positions[v]);
-                        max = Vec3.Max(max, _g.Positions[v]);
-                    }
-                }
-                prop.Min = min;
-                prop.Max = max;
-            }
+            void Bounds(Prop prop) => SetBounds(_g, prop);
         }
 
         // ------------------------------------------------------------------ objects.json
@@ -457,16 +515,7 @@ namespace Matterportable.Core
                     Triangles = tris.ToArray(),
                     Pivot = new Vec3((float)pivot[0], (float)pivot[1], (float)pivot[2]),
                 };
-                var min = new Vec3(float.MaxValue, float.MaxValue, float.MaxValue);
-                var max = new Vec3(float.MinValue, float.MinValue, float.MinValue);
-                foreach (int t in prop.Triangles)
-                {
-                    g.TriangleVertices(t, out int a, out int b, out int c);
-                    min = Vec3.Min(Vec3.Min(Vec3.Min(min, g.Positions[a]), g.Positions[b]), g.Positions[c]);
-                    max = Vec3.Max(Vec3.Max(Vec3.Max(max, g.Positions[a]), g.Positions[b]), g.Positions[c]);
-                }
-                prop.Min = min;
-                prop.Max = max;
+                SetBounds(g, prop);
                 props.Add(prop);
             }
             return props;
@@ -593,6 +642,9 @@ namespace Matterportable.Core
             }
             return prop == highlight ? new Rgba(1f, 1f, 1f, 0.3f) : new Rgba(0f, 0f, 0f, 0f);
         }
+
+        /// <summary>The prop is no longer where it was scanned (shaders then refuse its photo pixels for anything else).</summary>
+        public bool Moved(int prop) => !Poses[prop].IsIdentity;
 
         /// <summary>The door has been swung (or is swinging) away from where it was scanned.</summary>
         public bool DoorSwung(int prop) => _state[prop].DoorTarget != 0;

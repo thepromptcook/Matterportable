@@ -48,9 +48,10 @@ namespace Matterportable
         public void ComputeDepth(int sweep)
         {
             var bvh = _space.Model.Geometry.Bvh;
+            var pieces = _space.Model.PieceOfTriangle;
             var origin = _space.Model.Sweeps[sweep].Position;
             int size = _space.Settings.DepthMapSize;
-            Task.Run(() => _depthResults.Enqueue((sweep, CubeFaces.DepthCube(bvh, origin, size), size)));
+            Task.Run(() => _depthResults.Enqueue((sweep, CubeFaces.DepthCube(bvh, origin, size, pieces), size)));
         }
 
         public void Unload(int sweep)
@@ -67,9 +68,9 @@ namespace Matterportable
             var layers = new Godot.Collections.Array<Image>();
             for (int f = 0; f < 6; f++)
             {
-                var bytes = new byte[n * 2];
-                Buffer.BlockCopy(r.depth, f * n * 2, bytes, 0, n * 2);
-                layers.Add(Image.CreateFromData(r.size, r.size, false, Image.Format.Rh, bytes));
+                var bytes = new byte[n * 4]; // distance, piece seen: two half floats
+                Buffer.BlockCopy(r.depth, f * n * 4, bytes, 0, n * 4);
+                layers.Add(Image.CreateFromData(r.size, r.size, false, Image.Format.Rgh, bytes));
             }
             var tex = new Texture2DArray();
             tex.CreateFromImages(layers);

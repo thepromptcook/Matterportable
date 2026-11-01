@@ -31,6 +31,7 @@ Shader "Matterportable/Mesh"
             sampler2D _MainTex;
             float4 _MainTex_ST;
             float4 _MP_PropTint; // Walk mode: the prop under the pointer, or every prop in the "Props" view (alpha: how much)
+            float _MP_PropId;    // which piece this is: 0 the room, i + 1 prop i (the depth cubes record the piece seen)
 
             struct v2f
             {
@@ -64,17 +65,29 @@ Shader "Matterportable/Mesh"
 
                 float visA = _MP_Valid.x;
                 float visB = _MP_Valid.y;
+                bool holeA = false; // a moved prop hid this point from sweep A
                 if (_MP_State.z > 0.5)
                 {
-                    visA *= MP_DepthVisibility(_MP_DepthA, sampler_MP_DepthA, mul((float3x3)_MP_SpaceRot, dA), length(dA));
-                    visB *= MP_DepthVisibility(_MP_DepthB, sampler_MP_DepthB, mul((float3x3)_MP_SpaceRot, dB), length(dB));
+                    float a = MP_DepthVisibility(_MP_DepthA, sampler_MP_DepthA, mul((float3x3)_MP_SpaceRot, dA), length(dA), _MP_PropId);
+                    float b = MP_DepthVisibility(_MP_DepthB, sampler_MP_DepthB, mul((float3x3)_MP_SpaceRot, dB), length(dB), _MP_PropId);
+                    holeA = a < 0;
+                    visA *= max(a, 0);
+                    visB *= max(b, 0);
                 }
 
                 float wA, wB;
                 MP_BlendWeights(_MP_State.x, visA, visB, wA, wB);
                 float3 pano = (cA * wA + cB * wB) / max(wA + wB, 1e-5);
                 float coverage = saturate(max(visA, visB));
-                float3 col = lerp(tex, lerp(tex, pano, coverage), _MP_State.y);
+                // Where a moved prop hid this from the photo, fill from the photo's surroundings rather than the baked texture.
+                float3 fallback = tex;
+                if (holeA && coverage < 1)
+                {
+                    float found;
+                    float3 fill = MP_HoleFill(_MP_PanoA, sampler_MP_PanoA, _MP_DepthA, sampler_MP_DepthA, dA, _MP_RotA, _MP_PropId, found);
+                    if (found > 0) fallback = fill;
+                }
+                float3 col = lerp(tex, lerp(fallback, pano, coverage), _MP_State.y);
 
                 int view = (int)(_MP_State.w + 0.5);
                 if (view == 1) col = tex;

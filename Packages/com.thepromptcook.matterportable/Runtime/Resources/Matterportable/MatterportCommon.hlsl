@@ -21,6 +21,7 @@ float4 _MP_FaceUp[6];    // per canonical face: up axis (xyz)
 float4 _MP_State;        // x: blend A->B, y: projection amount (1 inside, 0 dollhouse), z: use depth, w: debug view
 float4 _MP_Valid;        // x: pano A loaded, y: pano B loaded, z: clip height (world y)
 float4 _MP_Background;   // background colour outside the panoramas
+float4 _MP_Moved[64];    // 1 for each prop that has moved (prop i: element i / 4, component i % 4)
 
 // Major axis of a direction; face index matches SignedAxis (0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z).
 float3 MP_FaceAxis(float3 l, out int face)
@@ -96,21 +97,66 @@ float MP_Visibility(float stored, float dist)
     return saturate(1.0 - (dist - stored - bias) / (0.5 * bias + 0.03));
 }
 
+float MP_Moved(float piece)
+{
+    int i = (int)(piece + 0.5) - 1;
+    if (i < 0 || i >= 256) return 0;
+    float4 v = _MP_Moved[i >> 2];
+    int c = i & 3;
+    return c == 0 ? v.x : c == 1 ? v.y : c == 2 ? v.z : v.w;
+}
+
+// A depth texel (distance, piece seen) hides the point when it shows a moved prop other than the piece drawn: the
+// surfaces the prop stood in front of were never photographed.
+bool MP_Hides(float2 texel, float piece)
+{
+    return abs(texel.y - piece) > 0.5 && MP_Moved(texel.y) > 0.5;
+}
+
 // Percentage-closer filtering: the visibility test on the four nearest depth texels (point-sampled), blended
 // bilinearly. Bilinear depth would mix near and far depths at silhouettes and dot the outlines of objects.
-// s: the direction from the sweep in the space frame (the depth maps are space-aligned).
-float MP_DepthVisibility(Texture2DArray depth, SamplerState smp, float3 s, float dist)
+// s: the direction from the sweep in the space frame (the depth maps are space-aligned); piece: what is being drawn
+// (0 the room, i + 1 prop i). -1 when a moved prop hid the point (any of the four texels, so the photo's pixels along
+// the prop's outline go too).
+float MP_DepthVisibility(Texture2DArray depth, SamplerState smp, float3 s, float dist, float piece)
 {
     float3 c = MP_DepthCoord(s);
     float size, height, slices;
     depth.GetDimensions(size, height, slices);
     float2 t = c.xy * size - 0.5, f = frac(t), base = (floor(t) + 0.5) / size;
     float2 step = float2(1 / size, 0);
-    float v00 = MP_Visibility(depth.SampleLevel(smp, float3(base, c.z), 0).r, dist);
-    float v10 = MP_Visibility(depth.SampleLevel(smp, float3(base + step.xy, c.z), 0).r, dist);
-    float v01 = MP_Visibility(depth.SampleLevel(smp, float3(base + step.yx, c.z), 0).r, dist);
-    float v11 = MP_Visibility(depth.SampleLevel(smp, float3(base + step.xx, c.z), 0).r, dist);
-    return lerp(lerp(v00, v10, f.x), lerp(v01, v11, f.x), f.y);
+    float2 t00 = depth.SampleLevel(smp, float3(base, c.z), 0).rg, t10 = depth.SampleLevel(smp, float3(base + step.xy, c.z), 0).rg;
+    float2 t01 = depth.SampleLevel(smp, float3(base + step.yx, c.z), 0).rg, t11 = depth.SampleLevel(smp, float3(base + step.xx, c.z), 0).rg;
+    if (MP_Hides(t00, piece) || MP_Hides(t10, piece) || MP_Hides(t01, piece) || MP_Hides(t11, piece)) return -1;
+    return lerp(lerp(MP_Visibility(t00.x, dist), MP_Visibility(t10.x, dist), f.x), lerp(MP_Visibility(t01.x, dist), MP_Visibility(t11.x, dist), f.x), f.y);
+}
+
+// What the photo shows around the hole a moved prop left: the nearest directions (rings of 8, from 2° to 30° away)
+// where the sweep saw something else, averaged at a coarse level. A smear of the surroundings reads as empty floor and
+// wall; the scan's baked texture there holds the prop. d: world direction from the sweep; worldToPano: its _MP_Rot.
+float3 MP_HoleFill(Texture2DArray pano, SamplerState ps, Texture2DArray depth, SamplerState ds, float3 d, float4x4 worldToPano, float piece, out float found)
+{
+    float3 n = normalize(d);
+    float3 u = normalize(cross(n, abs(n.y) < 0.9 ? float3(0, 1, 0) : float3(1, 0, 0)));
+    float3 v = cross(n, u);
+    float3 sum = 0;
+    found = 0;
+    for (int ring = 1; ring <= 7 && found == 0; ring++)
+    {
+        float r = 0.012 * ring * ring + 0.02;
+        for (int k = 0; k < 8; k++)
+        {
+            float a = k * 0.7853982 + ring * 0.39;
+            float3 dir = n + (u * cos(a) + v * sin(a)) * r;
+            if (MP_Hides(depth.SampleLevel(ds, MP_DepthCoord(mul((float3x3)_MP_SpaceRot, dir)), 0).rg, piece)) continue;
+            float3 coord;
+            float2 gx, gy;
+            MP_PanoCoords(mul((float3x3)worldToPano, dir), float3(0, 0, 0), float3(0, 0, 0), coord, gx, gy);
+            sum += pano.SampleLevel(ps, coord, 3).rgb;
+            found += 1;
+        }
+    }
+    return found > 0 ? sum / found : float3(0, 0, 0);
 }
 
 // Blend weights for panoramas A and B: B's share grows with t, and each takes over where the other is occluded.
