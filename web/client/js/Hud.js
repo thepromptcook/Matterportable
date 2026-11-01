@@ -8,7 +8,7 @@ export class Hud {
     const el = (cls, text = '') => Object.assign(document.createElement('div'), { className: cls, textContent: text });
     const button = (text, onclick) => Object.assign(document.createElement('button'), { textContent: text, onclick });
     this.root = document.createElement('div');
-    this.modes = ['Inside', 'Dollhouse', 'Floor plan'].map((label, mode) => button(label, () => nav.setMode(mode)));
+    this.modes = ['Inside', 'Dollhouse', 'Floor plan', 'Walk'].map((label, mode) => button(label, () => nav.setMode(mode)));
     this.measureButton = button('📏 Measure', () => measure.setActive(!measure.active));
     this.tour = button('▶ Tour', () => nav.toggleTour());
     this.floors = el('floors');
@@ -41,7 +41,7 @@ export class Hud {
     this.status.hidden = !nav.isWaitingForPanorama;
     this.modes.forEach((b, i) => b.classList.toggle('on', f.mode === i));
     this.measureButton.classList.toggle('on', this.measure.active);
-    this.measureButton.hidden = !sp.hasMesh;
+    this.measureButton.hidden = this.modes[ViewMode.Walk].hidden = !sp.hasMesh; // both need the mesh
     this.tour.textContent = nav.autoTour ? '■ Tour' : '▶ Tour';
     if (this.floorCount !== f.floorCount) this.buildFloors(f.floorCount);
     this.floors.hidden = f.mode === ViewMode.Inside || f.floorCount < 2;

@@ -392,10 +392,10 @@ namespace Matterportable.Core
 
         // ------------------------------------------------------------------ geometry queries
 
-        /// <summary>First surface the user sees (back faces culled outside Inside view, nothing above the clip height).</summary>
+        /// <summary>First surface the user sees (back faces culled in Dollhouse and Floor plan, nothing above the clip height).</summary>
         bool Raycast(Vec3 origin, Vec3 dir, float maxDistance, out Vec3 point, out float distance)
         {
-            bool found = _bvh.RaycastVisible(origin, dir, maxDistance, _view != ViewMode.Inside, _clip, out var hit);
+            bool found = _bvh.RaycastVisible(origin, dir, maxDistance, _view.FromAbove(), _clip, out var hit);
             point = hit.Point;
             distance = hit.Distance;
             return found;

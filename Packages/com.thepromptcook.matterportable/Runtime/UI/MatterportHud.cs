@@ -79,7 +79,9 @@ namespace Matterportable
             if (Button("Inside", nav.Mode == ViewMode.Inside)) nav.SetMode(ViewMode.Inside);
             if (Button("Dollhouse", nav.Mode == ViewMode.Dollhouse)) nav.SetMode(ViewMode.Dollhouse);
             if (Button("Floor plan", nav.Mode == ViewMode.Floorplan)) nav.SetMode(ViewMode.Floorplan);
-            if (_measure != null && space.Model.Geometry != null && Button("Measure", _measure.Active, 12)) _measure.SetActive(!_measure.Active);
+            bool mesh = space.Model.Geometry != null; // walking and measuring need it
+            if (mesh && Button("Walk", nav.Mode == ViewMode.Walk)) nav.SetMode(ViewMode.Walk);
+            if (_measure != null && mesh && Button("Measure", _measure.Active, 12)) _measure.SetActive(!_measure.Active);
             if (Button(nav.AutoTour ? "■ Tour" : "▶ Tour", nav.AutoTour, 12)) nav.AutoTour = !nav.AutoTour;
             if (nav.Mode == ViewMode.Inside || space.Model.FloorCount < 2) return;
             if (Button("All", nav.SelectedFloor < 0, 16)) nav.SetFloor(-1);

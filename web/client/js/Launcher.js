@@ -1,13 +1,14 @@
 // Mirrors MatterportLauncher (Unity) / Launcher (Godot): the start menu. Paste a Matterport link, open the offline
 // demo or a space the server already has; Esc or Menu returns here. The server downloads and prepares spaces.
-// URL parameters drive automated checks (tools/web-check.sh): ?open=<link|demo>&sweep=N&mode=dollhouse|floorplan
-// &view=N&goto=N&measure=1; window.mp reports state and offers showView() for the photo-vs-mesh comparison.
+// URL parameters drive automated checks (tools/web-check.sh): ?open=<link|demo>&sweep=N&mode=dollhouse|floorplan|walk
+// &yaw=degrees&view=N&goto=N&walk=seconds&measure=1; window.mp reports state and offers showView() for the
+// photo-vs-mesh comparison.
 import { MatterportSpace } from './MatterportSpace.js';
-import { MatterportNavigator, ViewMode } from './MatterportNavigator.js';
+import { MatterportNavigator, ViewMode, NavKeys } from './MatterportNavigator.js';
 import { MatterportMeasure } from './MatterportMeasure.js';
 import { Hud } from './Hud.js';
 
-const LastLinkKey = 'Matterportable.LastLink';
+const LastLinkKey = 'Matterportable.LastLink', WalkKey = 'Matterportable.Walk';
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
 
 export class Launcher {
@@ -28,6 +29,7 @@ export class Launcher {
       <h1>Matterportable</h1><p>Paste a Matterport link (or model ID) to walk through it.</p>
       <div class="row"><input placeholder="https://discover.matterport.com/space/rGMMnZDh3Tf"><button data-k="paste">Paste</button></div>
       <button data-k="open">Open space</button><button data-k="demo">Offline demo (no network)</button>
+      <label class="check"><input type="checkbox" data-k="walk"> Start in Walk mode: move freely with W A S D (walls and furniture block you)</label>
       <div class="status"></div><div class="bar" hidden><div></div></div>
       <p>Spaces on this server (shared with the Unity and Godot projects):</p><div class="spaces"></div></div>`;
     document.body.appendChild(m);
@@ -37,6 +39,9 @@ export class Launcher {
     this.bar = q('.bar');
     this.spacesEl = q('.spaces');
     this.input.value = localStorage.getItem(LastLinkKey) ?? '';
+    this.walkMode = q('[data-k=walk]');
+    this.walkMode.checked = localStorage.getItem(WalkKey) === '1';
+    this.walkMode.onchange = () => localStorage.setItem(WalkKey, this.walkMode.checked ? '1' : '0');
     this.input.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.open(this.input.value); });
     q('[data-k=paste]').onclick = async () => {
       try { this.input.value = (await navigator.clipboard.readText()).trim(); } catch { this.input.focus(); this.setStatus('Press Ctrl+V to paste.'); }
@@ -101,8 +106,10 @@ export class Launcher {
       return;
     }
     const nav = this.nav = new MatterportNavigator(this.camera, this.renderer.domElement, sp, this.scene);
-    const mode = { dollhouse: ViewMode.Dollhouse, floorplan: ViewMode.Floorplan }[this.params.get('mode')] ?? ViewMode.Inside;
+    const mode = { inside: ViewMode.Inside, dollhouse: ViewMode.Dollhouse, floorplan: ViewMode.Floorplan, walk: ViewMode.Walk }[this.params.get('mode')]
+      ?? (this.walkMode.checked ? ViewMode.Walk : ViewMode.Inside);
     sp.core.Navigate(7, Number(this.params.get('sweep') ?? 0), mode, 0);
+    if (this.params.has('yaw')) nav.look(Number(this.params.get('yaw')));
     nav.setDebugView(Number(this.params.get('view') ?? 0));
     const measure = this.measure = new MatterportMeasure(sp, nav);
     this.hud = new Hud(sp, nav, measure, () => this.showMenu());
@@ -159,6 +166,12 @@ export class Launcher {
     await this.waitSettled(5);
     const go = this.params.get('goto');
     if (go !== null) { this.nav.goTo(Number(go)); await nextFrame(); await this.waitSettled(5); }
+    const walk = Number(this.params.get('walk') ?? 0);
+    if (walk > 0) { // hold W for that long
+      this.nav.scriptedHeld = NavKeys.Forward;
+      for (const start = performance.now(); performance.now() - start < walk * 1000;) await nextFrame();
+      this.nav.scriptedHeld = 0;
+    }
     if (this.params.get('measure')) {
       const w = this.renderer.domElement.clientWidth, h = this.renderer.domElement.clientHeight;
       this.measure.setActive(true);
@@ -173,7 +186,8 @@ export class Launcher {
     }
     await this.waitSettled(20);
     const f = this.measure.frame;
-    this.checks = `${this.space.status}; mode ${['Inside', 'Dollhouse', 'Floorplan'][this.nav.frame.mode]}, sweep ${this.nav.frame.currentSweep}` +
+    const c = this.nav.coreCamera;
+    this.checks = `${this.space.status}; mode ${['Inside', 'Dollhouse', 'Floorplan', 'Walk'][this.nav.frame.mode]}, sweep ${this.nav.frame.currentSweep}, camera (${c.map((v) => v.toFixed(2)).join(', ')})` +
       (f ? `; ${f.lines.length} measurement(s), drawing ${f.draft ? 'yes' : 'no'}, menu ${this.menu.hidden ? 'closed' : 'open'}` : '');
   }
 

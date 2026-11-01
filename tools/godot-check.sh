@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Runs the Godot project headless on the offline demo (virtual display, OpenGL/llvmpipe) and saves screenshots:
 #   $OUT/inside.png (after moving from sweep 0 to sweep 1)  $OUT/dollhouse.png
-#   $OUT/measure.png (measure mode: a finished two-segment line, Escape, and a line following the cursor)   (default OUT=/tmp/matterportable-godot; open them to look at the result)
+#   $OUT/measure.png (measure mode: a finished two-segment line, Escape, and a line following the cursor)
+#   $OUT/walk.png (Walk mode: W held for 1 s towards the table, which must stop the body)
+#   (default OUT=/tmp/matterportable-godot; open them to look at the result)
 # Fails on any engine, shader or script error. Needs Godot .NET (tools/setup-dev.sh installs it to /opt/godot)
 # and xvfb-run. Extra arguments are passed to every run, e.g. --sweep 3 or --view 2.
 set -uo pipefail
@@ -25,16 +27,18 @@ if [[ ! -d godot/.godot || $missing_uid == 1 ]]; then
 fi
 
 rc=0
-for run in inside dollhouse measure; do
+for run in inside dollhouse measure walk; do
   mode=$run; extra=()
   [[ $run == inside ]] && extra=(--goto 1)                  # exercise a full sweep-to-sweep transition
   [[ $run == measure ]] && { mode=inside; extra=(--measure); }
+  [[ $run == walk ]] && extra=(--yaw 54 --walk 1)
   log="$OUT/$run.log"
   timeout 180 xvfb-run -a -s "-screen 0 1600x900x24" "$GODOT" --path godot --audio-driver Dummy \
     --rendering-driver opengl3 --rendering-method gl_compatibility -- --open demo --mode "$mode" --screenshot "$OUT/$run.png" "${extra[@]}" "$@" >"$log" 2>&1
   status=$?
   expect="screenshot saved"
   [[ $run == measure ]] && expect="1 measurement(s), drawing yes, menu closed"
+  [[ $run == walk ]] && expect="mode Walk"
   if [[ $status != 0 ]] || grep -qE "ERROR|Unhandled exception|SCRIPT ERROR|SHADER ERROR" "$log" || ! grep -q "$expect" "$log"; then
     echo "error: Godot $run run failed (exit $status, expected \"$expect\"), log: $log"; grep -E "ERROR|rror|Exception" "$log" | head -15; rc=1
   else

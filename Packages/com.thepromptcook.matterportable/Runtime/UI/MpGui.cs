@@ -7,7 +7,7 @@ namespace Matterportable
     {
         static Texture2D _panelTex, _menuTex, _buttonTex, _accentTex, _onTex;
 
-        public static GUIStyle Panel, MenuPanel, Title, Label, Small, Center, Field, Button, ButtonOn;
+        public static GUIStyle Panel, MenuPanel, Title, Label, Small, Center, Field, Button, ButtonOn, Toggle;
         public static Texture2D BarBack => _buttonTex;
         public static Texture2D BarFill => _onTex;
 
@@ -26,6 +26,7 @@ namespace Matterportable
             Small = new GUIStyle(Label) { fontSize = 12, normal = { textColor = new Color(0.8f, 0.8f, 0.83f) } };
             Center = new GUIStyle(Label) { alignment = TextAnchor.MiddleCenter };
             Title = new GUIStyle(Label) { fontSize = 26, fontStyle = FontStyle.Bold };
+            Toggle = new GUIStyle(GUI.skin.toggle) { fontSize = 13, normal = { textColor = Color.white }, onNormal = { textColor = Color.white } };
             Field = new GUIStyle(GUI.skin.textField) { fontSize = 15, alignment = TextAnchor.MiddleLeft, padding = new RectOffset(8, 8, 6, 6) };
             Button = new GUIStyle(GUI.skin.button)
             {

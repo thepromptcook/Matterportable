@@ -12,6 +12,8 @@ namespace Matterportable
     {
         public MatterportSpace Space;
         public ViewMode StartMode = ViewMode.Inside;
+        /// <summary>Keys held by a script (automated checks), as if pressed.</summary>
+        public NavKeys ScriptedHeld;
         public Navigator Core { get; private set; }
 
         SweepMarkers _markers;
@@ -41,7 +43,7 @@ namespace Matterportable
 
         static NavKeys Map(Key k) => k switch
         {
-            Key.Key1 => NavKeys.Inside, Key.Key2 => NavKeys.Dollhouse, Key.Key3 => NavKeys.Floorplan,
+            Key.Key1 => NavKeys.Inside, Key.Key2 => NavKeys.Dollhouse, Key.Key3 => NavKeys.Floorplan, Key.Key4 => NavKeys.Walk,
             Key.W or Key.Up => NavKeys.Forward, Key.S or Key.Down => NavKeys.Back, Key.A => NavKeys.Left, Key.D => NavKeys.Right,
             Key.Bracketright => NavKeys.Next, Key.Bracketleft => NavKeys.Previous, Key.Home => NavKeys.Home,
             Key.Pageup => NavKeys.FloorUp, Key.Pagedown => NavKeys.FloorDown, Key.P => NavKeys.Tour, Key.F2 => NavKeys.DebugView,
@@ -79,7 +81,8 @@ namespace Matterportable
                 Scroll = _scroll,
                 Pressed = _pressed,
                 Held = Held((Key.Left, NavKeys.TurnLeft), (Key.Q, NavKeys.TurnLeft), (Key.Right, NavKeys.TurnRight), (Key.E, NavKeys.TurnRight),
-                    (Key.W, NavKeys.Forward), (Key.Up, NavKeys.Forward), (Key.S, NavKeys.Back), (Key.Down, NavKeys.Back), (Key.A, NavKeys.Left), (Key.D, NavKeys.Right)),
+                    (Key.W, NavKeys.Forward), (Key.Up, NavKeys.Forward), (Key.S, NavKeys.Back), (Key.Down, NavKeys.Back), (Key.A, NavKeys.Left), (Key.D, NavKeys.Right),
+                    (Key.Shift, NavKeys.Run)) | ScriptedHeld,
             });
             _down = _up = 0;
             _scroll = 0;

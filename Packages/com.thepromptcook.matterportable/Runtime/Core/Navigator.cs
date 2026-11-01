@@ -3,7 +3,15 @@ using System.Collections.Generic;
 
 namespace Matterportable.Core
 {
-    public enum ViewMode { Inside, Dollhouse, Floorplan }
+    /// <summary>Inside: Matterport's sweep-to-sweep view. Walk: free movement with W/A/S/D, colliding with the scan.
+    /// Dollhouse and Floorplan look at the model from outside.</summary>
+    public enum ViewMode { Inside, Dollhouse, Floorplan, Walk }
+
+    public static class ViewModes
+    {
+        /// <summary>Dollhouse and floor plan: back faces culled, floors above the selected one hidden, every sweep marked.</summary>
+        public static bool FromAbove(this ViewMode mode) => mode == ViewMode.Dollhouse || mode == ViewMode.Floorplan;
+    }
 
     /// <summary>Keys the navigator understands (engines map their input to these).</summary>
     [Flags]
@@ -11,7 +19,7 @@ namespace Matterportable.Core
     {
         None = 0, Inside = 1, Dollhouse = 1 << 1, Floorplan = 1 << 2, Forward = 1 << 3, Back = 1 << 4, Left = 1 << 5, Right = 1 << 6,
         TurnLeft = 1 << 7, TurnRight = 1 << 8, Next = 1 << 9, Previous = 1 << 10, Home = 1 << 11, FloorUp = 1 << 12, FloorDown = 1 << 13,
-        Tour = 1 << 14, DebugView = 1 << 15,
+        Tour = 1 << 14, DebugView = 1 << 15, Walk = 1 << 16, Run = 1 << 17,
     }
 
     /// <summary>One frame of input. Pixels have y pointing down; the ray is the pointer's, in the Core frame.</summary>
@@ -48,7 +56,8 @@ namespace Matterportable.Core
 
     /// <summary>
     /// Matterport-style navigation, shared by Unity, Godot and the web: drag to look, click to move with the
-    /// cross-fade, W/A/S/D to step between sweeps, wheel to zoom, Dollhouse and Floor plan. Works in the Core frame
+    /// cross-fade, W/A/S/D to step between sweeps, wheel to zoom, Dollhouse and Floor plan, and Walk mode (free W/A/S/D
+    /// movement with the scan as collider, see <see cref="Walker"/>). Works in the Core frame
     /// (Unity's: left-handed, Y up; yaw clockwise from above, positive pitch looks down). Engines feed
     /// <see cref="NavigatorInput"/> and apply <see cref="CameraPosition"/>, <see cref="CameraRotation"/>,
     /// <see cref="Fov"/>, <see cref="View"/> and <see cref="Markers"/>.
@@ -79,7 +88,7 @@ namespace Matterportable.Core
         public readonly List<Marker> Markers = new List<Marker>();
 
         /// <summary>Height above which geometry is hidden in the current view (floor filter), else +infinity.</summary>
-        public float ViewClipHeight => Mode != ViewMode.Inside && !(_anim.Active && _anim.Target == ViewMode.Inside) ? ClipHeight() : float.PositiveInfinity;
+        public float ViewClipHeight => Mode.FromAbove() && !(_anim.Active && !_anim.Target.FromAbove()) ? ClipHeight() : float.PositiveInfinity;
 
         struct Move { public bool Active; public int From, To; public Vec3 FromPos, ToPos; public double Start; public float Duration; }
 
@@ -108,6 +117,14 @@ namespace Matterportable.Core
         float _orbitYaw, _orbitPitch = 40f, _orbitDistance = 12f, _orbitDistanceGoal = 12f;
         bool[] _visible = Array.Empty<bool>();
         readonly List<int> _visibleFromCurrent = new List<int>();
+        ViewMode _flyInMode = ViewMode.Inside;
+        // Walk mode
+        Walker _walker;
+        Vec3 _walkVelocity, _walkChecked;
+        float _walkEyeY, _walkBlend;
+        int _walkA = -1, _walkB = -1;
+        readonly int[] _near = new int[3];
+        readonly List<int> _byDistance = new List<int>();
 
         public Navigator(SpaceModel space, ViewerSettings settings, PanoramaScheduler panoramas)
         {
@@ -130,11 +147,12 @@ namespace Matterportable.Core
 
         // ------------------------------------------------------------------ public API
 
+        /// <summary>Moves to a sweep: the usual transition (from Walk mode too), or a fly-in from Dollhouse / Floor plan.</summary>
         public void GoTo(int sweep)
         {
             if (sweep < 0 || sweep >= Sweeps.Count) return;
-            if (Mode != ViewMode.Inside) { WhenPanoramaReady(sweep, flyIn: true); return; }
-            if (sweep == CurrentSweep && !_move.Active) return;
+            if (Mode.FromAbove()) { FlyIn(sweep, ViewMode.Inside); return; }
+            if (sweep == CurrentSweep && !_move.Active && Mode == ViewMode.Inside) return;
             if (_move.Active || _anim.Active) _queued = sweep;
             else WhenPanoramaReady(sweep, flyIn: false);
         }
@@ -142,14 +160,17 @@ namespace Matterportable.Core
         public void SetMode(ViewMode mode)
         {
             if (_anim.Active || mode == Mode || Sweeps.Count == 0) return;
-            if (mode == ViewMode.Inside) WhenPanoramaReady(Math.Max(0, CurrentSweep), flyIn: true);
-            else StartOrbitMode(mode);
+            if (mode == ViewMode.Walk && _space.Geometry == null) return; // walking needs the mesh to collide with
+            if (mode.FromAbove()) StartOrbitMode(mode);
+            else if (Mode.FromAbove()) FlyIn(Math.Max(0, CurrentSweep), mode);
+            else if (mode == ViewMode.Walk) StartWalk(CameraPosition);
+            else GoTo(CurrentSweep); // Walk → Inside: move to the nearest sweep
         }
 
         public void SetFloor(int floor)
         {
             SelectedFloor = Math.Max(-1, Math.Min(floor, _space.FloorCount - 1));
-            if (Mode != ViewMode.Inside) _orbitTargetGoal = OrbitCenter();
+            if (Mode.FromAbove()) _orbitTargetGoal = OrbitCenter();
         }
 
         /// <summary>Jumps instantly (no transition), looking along yaw/pitch in degrees - for tests and tools.</summary>
@@ -160,13 +181,20 @@ namespace Matterportable.Core
             _move = default;
             _anim = default;
             _pending = _queued = -1;
+            _walker = null;
             Mode = ViewMode.Inside;
             CullBack = false;
             _projection = 1f;
-            _yaw = _targetYaw = yaw;
-            _pitch = _targetPitch = pitch;
+            Look(yaw, pitch);
             _fov = _targetFov = _s.DefaultFov;
             Arrive(sweep);
+        }
+
+        /// <summary>Turns the view instantly, in degrees (yaw clockwise from +Z, pitch down) - for scripts and checks.</summary>
+        public void Look(float yaw, float pitch = 0f)
+        {
+            _yaw = _targetYaw = yaw;
+            _pitch = _targetPitch = Clamp(pitch, -85f, 85f);
         }
 
         void Initialise()
@@ -174,7 +202,8 @@ namespace Matterportable.Core
             _initialised = true;
             Arrive(Math.Max(0, Math.Min(StartSweep, Sweeps.Count - 1)));
             CameraPosition = SweepPos(CurrentSweep);
-            if (StartMode != ViewMode.Inside) StartOrbitMode(StartMode);
+            if (StartMode.FromAbove()) StartOrbitMode(StartMode);
+            else if (StartMode == ViewMode.Walk && _space.Geometry != null) StartWalk(CameraPosition); // stays Inside where there's no floor
         }
 
         // ------------------------------------------------------------------ frame
@@ -189,6 +218,7 @@ namespace Matterportable.Core
             UpdatePending();
             UpdateMove();
             UpdateModeAnim();
+            UpdateWalk(input);
             UpdateCamera(input.DeltaTime);
             UpdateHover(input);
             UpdateTour();
@@ -205,6 +235,7 @@ namespace Matterportable.Core
             if (Has(NavKeys.Inside)) SetMode(ViewMode.Inside);
             if (Has(NavKeys.Dollhouse)) SetMode(ViewMode.Dollhouse);
             if (Has(NavKeys.Floorplan)) SetMode(ViewMode.Floorplan);
+            if (Has(NavKeys.Walk)) SetMode(ViewMode.Walk);
             if (Has(NavKeys.DebugView)) DebugView = (DebugView + 1) % ViewerText.DebugViews.Length;
             if (Has(NavKeys.Tour)) AutoTour = !AutoTour;
             if (Has(NavKeys.Home)) GoTo(Math.Max(0, Math.Min(StartSweep, n - 1)));
@@ -214,15 +245,15 @@ namespace Matterportable.Core
             if (Has(NavKeys.FloorDown)) SetFloor(SelectedFloor <= 0 ? -1 : SelectedFloor - 1);
 
             float turn = (Held(NavKeys.TurnRight) ? 1 : 0) - (Held(NavKeys.TurnLeft) ? 1 : 0), dt = input.DeltaTime;
+            if (!Mode.FromAbove()) _targetYaw += turn * _s.KeyTurnSpeed * dt;
             if (Mode == ViewMode.Inside)
             {
-                _targetYaw += turn * _s.KeyTurnSpeed * dt;
                 if (Has(NavKeys.Forward)) Step(Vec3.Forward);
                 if (Has(NavKeys.Back)) Step(-Vec3.Forward);
                 if (Has(NavKeys.Left)) Step(-Vec3.Right);
                 if (Has(NavKeys.Right)) Step(Vec3.Right);
             }
-            else if (!_anim.Active)
+            else if (Mode.FromAbove() && !_anim.Active)
             {
                 turn += (Held(NavKeys.Right) ? 1 : 0) - (Held(NavKeys.Left) ? 1 : 0);
                 _orbitYaw += turn * _s.KeyTurnSpeed * dt;
@@ -259,10 +290,10 @@ namespace Matterportable.Core
             }
             if (Math.Abs(input.Scroll) > 0.001f && input.PointerOver)
             {
-                if (Mode == ViewMode.Inside) _targetFov = Clamp(_targetFov - input.Scroll * _s.ZoomStep, _s.MinFov, _s.MaxFov);
+                if (!Mode.FromAbove()) _targetFov = Clamp(_targetFov - input.Scroll * _s.ZoomStep, _s.MinFov, _s.MaxFov);
                 else _orbitDistanceGoal = Clamp(_orbitDistanceGoal * (float)Math.Exp(-input.Scroll * 0.15f), 1.5f, 500f);
             }
-            if (Clicked && !Measuring && !_anim.Active)
+            if (Clicked && !Measuring && !_anim.Active && Mode != ViewMode.Walk)
             {
                 int target = Mode == ViewMode.Inside ? PickInside(input.RayOrigin, input.RayDirection) : PickFromAbove(input.RayOrigin, input.RayDirection);
                 if (target >= 0) GoTo(target);
@@ -272,7 +303,7 @@ namespace Matterportable.Core
         void Drag(float dx, float dy, float height)
         {
             if (_anim.Active) return;
-            if (Mode == ViewMode.Inside)
+            if (!Mode.FromAbove())
             {
                 // Grab-style: the point under the cursor follows the cursor.
                 float degPerPixel = _fov / height * _s.DragSensitivity * (_s.InvertDrag ? -1f : 1f);
@@ -389,7 +420,7 @@ namespace Matterportable.Core
 
         void StartMove(int to)
         {
-            var from = CurrentSweep >= 0 ? SweepPos(CurrentSweep) : CameraPosition;
+            var from = CameraPosition; // the current sweep, or where Walk mode left off
             var target = SweepPos(to);
             _move = new Move { Active = true, From = CurrentSweep, To = to, FromPos = from, ToPos = target, Start = _time, Duration = _s.TransitionDuration((target - from).Length) };
             _panos.RequestDepth(to);
@@ -412,7 +443,12 @@ namespace Matterportable.Core
             int target = _pending;
             _pending = -1;
             if (_pendingIsFlyIn) BeginFlyIn(target);
-            else if (Mode == ViewMode.Inside && !_move.Active) StartMove(target);
+            else if (!Mode.FromAbove() && !_move.Active)
+            {
+                Mode = ViewMode.Inside; // leaving Walk: the usual move, from where the camera is
+                _walker = null;
+                StartMove(target);
+            }
         }
 
         void UpdateMove()
@@ -449,6 +485,84 @@ namespace Matterportable.Core
             GoTo((CurrentSweep + 1) % Sweeps.Count);
         }
 
+        // ------------------------------------------------------------------ walk mode
+
+        /// <summary>Starts walking with the eyes at <paramref name="eye"/>. False, changing nothing, where the body can't
+        /// stand (no floor below, as at unplaced 360° photos).</summary>
+        bool StartWalk(Vec3 eye)
+        {
+            var sweep = Sweeps[Math.Max(0, CurrentSweep)];
+            // Eyes at the capture camera's height, so standing at a sweep shows exactly its photo.
+            float height = sweep.FloorHit ? Clamp(sweep.Position.Y - sweep.FloorPoint.Y, 1f, 2f) : 1.55f;
+            var walker = new Walker(_space.Geometry.Bvh, eye, height, _s.BodyRadius, _s.StepHeight);
+            if (!walker.Standing) return false;
+            _walker = walker;
+            _walkEyeY = _walker.Eye.Y;
+            _walkVelocity = Vec3.Zero;
+            _walkA = _walkB = -1;
+            _walkChecked = new Vec3(float.MaxValue, 0, 0);
+            _move = default;
+            _queued = _pending = -1;
+            Mode = ViewMode.Walk;
+            CullBack = false;
+            _projection = 1f;
+            UpdateWalkPanoramas();
+            return true;
+        }
+
+        /// <summary>W/S (or ↑/↓) walk, A/D step sideways, relative to the view; Shift runs. The body collides with the scan.</summary>
+        void UpdateWalk(in NavigatorInput input)
+        {
+            if (Mode != ViewMode.Walk || _anim.Active) return;
+            NavKeys held = input.Held;
+            float forward = ((held & NavKeys.Forward) != 0 ? 1 : 0) - ((held & NavKeys.Back) != 0 ? 1 : 0);
+            float sideways = ((held & NavKeys.Right) != 0 ? 1 : 0) - ((held & NavKeys.Left) != 0 ? 1 : 0);
+            var wish = Quat.Euler(0, _yaw) * new Vec3(sideways, 0, forward);
+            if (wish.SqrLength > 1) wish = wish.Normalized;
+            float dt = input.DeltaTime, speed = _s.WalkSpeed * ((held & NavKeys.Run) != 0 ? 2f : 1f);
+            _walkVelocity = Vec3.Lerp(_walkVelocity, wish * speed, 1f - (float)Math.Exp(-10f * dt));
+            _walker.Move(_walkVelocity * dt, dt);
+            UpdateWalkPanoramas();
+        }
+
+        /// <summary>
+        /// The panoramas shown while walking: the two nearest sweeps in view, cross-faded by distance. Weights are
+        /// 1/d minus 1/d of the third nearest, so a sweep joins or leaves the pair only when its weight is zero, and a
+        /// sweep keeps its slot while it stays: no pops. Re-chosen every 5 cm; the nearest few load with depth cubes.
+        /// </summary>
+        void UpdateWalkPanoramas()
+        {
+            var eye = _walker.Eye;
+            if ((eye - _walkChecked).Length < 0.05f) return;
+            _walkChecked = eye;
+            _byDistance.Clear();
+            for (int i = 0; i < Sweeps.Count; i++) _byDistance.Add(i);
+            _byDistance.Sort((x, y) => (SweepPos(x) - eye).SqrLength.CompareTo((SweepPos(y) - eye).SqrLength));
+            int found = 0;
+            for (int k = 0; k < _byDistance.Count && k < 8 && found < 3; k++)
+                if (_space.LineOfSight(eye, SweepPos(_byDistance[k]))) _near[found++] = _byDistance[k];
+            if (found == 0) _near[found++] = _byDistance[0]; // nothing in view: the nearest anyway
+            for (int k = 0; k < found; k++)
+            {
+                _panos.RequestProgressive(_near[k], _s.PanoMaxSize, k);
+                _panos.RequestDepth(_near[k]);
+            }
+            for (int k = 0; k < _byDistance.Count && k < 4; k++) _panos.Request(_byDistance[k], _s.PanoMaxSize, 10f + k);
+            float Inverse(int s) => 1f / Math.Max(0.05f, (SweepPos(s) - eye).Length);
+            float third = found == 3 ? Inverse(_near[2]) : 0f;
+            int a = _near[0], b = found > 1 ? _near[1] : -1;
+            float wa = Inverse(a) - third, wb = b >= 0 ? Math.Max(0f, Inverse(b) - third) : 0f;
+            if (b >= 0 && (a == _walkB || b == _walkA))
+            {
+                (a, b) = (b, a);
+                (wa, wb) = (wb, wa);
+            }
+            CurrentSweep = _near[0];
+            _walkA = a;
+            _walkB = b;
+            _walkBlend = b >= 0 && wa + wb > 0 ? wb / (wa + wb) : 0f;
+        }
+
         // ------------------------------------------------------------------ dollhouse / floor plan
 
         Vec3 OrbitCenter()
@@ -483,7 +597,7 @@ namespace Matterportable.Core
 
         void StartOrbitMode(ViewMode mode)
         {
-            _orbitYaw = Mode == ViewMode.Inside ? _yaw : _orbitYaw;
+            _orbitYaw = Mode.FromAbove() ? _orbitYaw : _yaw;
             _orbitPitch = mode == ViewMode.Floorplan ? 89.9f : 40f;
             _orbitTarget = _orbitTargetGoal = OrbitCenter();
             _orbitDistance = _orbitDistanceGoal = OrbitDistanceFor(mode);
@@ -491,14 +605,21 @@ namespace Matterportable.Core
             Animate(mode, to.position, to.rotation, mode == ViewMode.Floorplan ? _s.FloorplanFov : _s.DollhouseFov, 0f, CurrentSweep);
             CullBack = true;
             _move = default;
+            _walker = null;
+        }
+
+        void FlyIn(int sweep, ViewMode mode)
+        {
+            _flyInMode = mode;
+            WhenPanoramaReady(sweep, flyIn: true);
         }
 
         void BeginFlyIn(int sweep)
         {
-            _yaw = _targetYaw = Mode == ViewMode.Inside ? _yaw : _orbitYaw;
+            _yaw = _targetYaw = Mode.FromAbove() ? _orbitYaw : _yaw;
             _pitch = _targetPitch = 0f;
             _fov = _targetFov = _s.DefaultFov;
-            Animate(ViewMode.Inside, SweepPos(sweep), Quat.Euler(0, _yaw), _fov, 1f, sweep);
+            Animate(_flyInMode, SweepPos(sweep), Quat.Euler(0, _yaw), _fov, 1f, sweep);
             CurrentSweep = sweep;
             _panos.RequestDepth(sweep);
         }
@@ -523,22 +644,29 @@ namespace Matterportable.Core
             _anim.Active = false;
             Mode = _anim.Target;
             _projection = _anim.ToProj;
-            if (Mode != ViewMode.Inside) return;
+            if (Mode.FromAbove()) return;
             CullBack = false;
             Arrive(_anim.Sweep);
+            if (Mode == ViewMode.Walk && !StartWalk(SweepPos(_anim.Sweep))) Mode = ViewMode.Inside;
         }
 
         void UpdateCamera(float dt)
         {
             if (_anim.Active) return;
             float k = 1f - (float)Math.Exp(-_s.LookSmoothing * dt);
-            if (Mode == ViewMode.Inside)
+            if (!Mode.FromAbove())
             {
                 float dyaw = ((_targetYaw - _yaw) % 360f + 540f) % 360f - 180f; // the short way round
                 _yaw += dyaw * k;
                 _pitch += (_targetPitch - _pitch) * k;
                 _fov += (_targetFov - _fov) * k;
-                CameraPosition = _move.Active ? Vec3.Lerp(_move.FromPos, _move.ToPos, Ease(MoveT)) : SweepPos(CurrentSweep);
+                if (Mode == ViewMode.Walk)
+                {
+                    var eye = _walker.Eye; // steps are smoothed, falls followed
+                    _walkEyeY = _walker.Grounded ? _walkEyeY + (eye.Y - _walkEyeY) * (1f - (float)Math.Exp(-12f * dt)) : eye.Y;
+                    CameraPosition = new Vec3(eye.X, _walkEyeY, eye.Z);
+                }
+                else CameraPosition = _move.Active ? Vec3.Lerp(_move.FromPos, _move.ToPos, Ease(MoveT)) : SweepPos(CurrentSweep);
                 CameraRotation = Quat.Euler(_pitch, _yaw);
                 Fov = _fov;
                 return;
@@ -550,7 +678,7 @@ namespace Matterportable.Core
         }
 
         float ClipHeight() =>
-            Mode == ViewMode.Inside || SelectedFloor < 0 || SelectedFloor + 1 >= _space.FloorCount ? float.PositiveInfinity : _space.FloorHeight(SelectedFloor + 1) - 0.25f;
+            !Mode.FromAbove() || SelectedFloor < 0 || SelectedFloor + 1 >= _space.FloorCount ? float.PositiveInfinity : _space.FloorHeight(SelectedFloor + 1) - 0.25f;
 
         bool FloorShown(int floor) => SelectedFloor < 0 || floor == SelectedFloor;
 
@@ -566,6 +694,12 @@ namespace Matterportable.Core
                 blend = Ease(InverseLerp(0.1f, 0.9f, MoveT));
             }
             else if (_anim.Active) a = _anim.Sweep;
+            else if (Mode == ViewMode.Walk)
+            {
+                a = _walkA;
+                b = _walkB;
+                blend = _walkBlend;
+            }
             _shownA = a;
             _shownB = b;
             _panos.Touch(a);
@@ -598,7 +732,7 @@ namespace Matterportable.Core
         {
             HoverSweep = -1;
             _reticle = false;
-            if (Measuring || _anim.Active || _dragging || !input.PointerOver) return;
+            if (Measuring || _anim.Active || _dragging || !input.PointerOver || Mode == ViewMode.Walk) return;
             if (Mode == ViewMode.Inside)
             {
                 if (_move.Active || !_space.Raycast(input.RayOrigin, input.RayDirection, 200f, out var hit)) return;
@@ -632,7 +766,7 @@ namespace Matterportable.Core
             {
                 if (radius > 0 && color.A > 0.001f) Markers.Add(new Marker { Position = position, Normal = normal, Radius = radius, Color = color, Inner = inner, Fill = fill });
             }
-            if (_s.ShowMarkers && !_anim.Active && !Measuring)
+            if (_s.ShowMarkers && !_anim.Active && !Measuring && Mode != ViewMode.Walk)
             {
                 if (Mode == ViewMode.Inside)
                 {

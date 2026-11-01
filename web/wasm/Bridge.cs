@@ -128,7 +128,7 @@ public static partial class Bridge
     [JSExport] public static void DepthReady(int sweep) => _panos.DepthReady(sweep);
 
     /// <summary>Navigation commands: 0 go to sweep, 1 set mode, 2 set floor (-1 all), 3 teleport (sweep, yaw, pitch),
-    /// 4 toggle tour, 5 render view, 6 measuring on/off, 7 start sweep and mode.</summary>
+    /// 4 toggle tour, 5 render view, 6 measuring on/off, 7 start sweep and mode, 8 look (yaw, pitch).</summary>
     [JSExport]
     public static void Navigate(int command, int a, double b, double c)
     {
@@ -142,6 +142,7 @@ public static partial class Bridge
             case 5: _nav.DebugView = a; break;
             case 6: _nav.Measuring = a != 0; break;
             case 7: _nav.StartSweep = a; _nav.StartMode = (ViewMode)(int)b; break;
+            case 8: _nav.Look((float)b, (float)c); break;
         }
     }
 

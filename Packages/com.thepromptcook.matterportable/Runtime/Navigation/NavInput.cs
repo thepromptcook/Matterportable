@@ -86,6 +86,7 @@ namespace Matterportable
                 case KeyCode.Alpha1: return UnityEngine.InputSystem.Key.Digit1;
                 case KeyCode.Alpha2: return UnityEngine.InputSystem.Key.Digit2;
                 case KeyCode.Alpha3: return UnityEngine.InputSystem.Key.Digit3;
+                case KeyCode.Alpha4: return UnityEngine.InputSystem.Key.Digit4;
                 case KeyCode.F1: return UnityEngine.InputSystem.Key.F1;
                 case KeyCode.F2: return UnityEngine.InputSystem.Key.F2;
                 case KeyCode.F3: return UnityEngine.InputSystem.Key.F3;

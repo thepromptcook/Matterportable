@@ -33,6 +33,8 @@ namespace Matterportable.Core
         public Rgba MarkerColor = new Rgba(1f, 1f, 1f, 0.9f);
         // Dollhouse and floor plan.
         public float DollhouseFov = 45f, FloorplanFov = 20f, OrbitSensitivity = 0.25f, ModeTransitionTime = 1.1f;
+        // Walk mode: speed in m/s (Shift doubles it), the body's radius, and the highest step it climbs.
+        public float WalkSpeed = 1.6f, BodyRadius = 0.25f, StepHeight = 0.3f;
         public Rgba BackgroundColor = new Rgba(0.11f, 0.11f, 0.12f, 1f);
         // Diagnostics: also print progress to the console (always written to debug/load.log).
         public bool VerboseLogging;
@@ -133,8 +135,8 @@ namespace Matterportable.Core
     /// <summary>Text every front end shows.</summary>
     public static class ViewerText
     {
-        public const string KeyHint = "Drag to look · Click to move · W A S D step · ←/→ turn · Wheel zoom · 1/2/3 Inside/Dollhouse/Floor plan · " +
-                                      "M measure · [ ] prev/next · P tour · F1 stats · F2 render view · H hide · Esc menu";
+        public const string KeyHint = "Drag to look · Click to move · W A S D step or walk · ←/→ turn · Wheel zoom · " +
+                                      "1/2/3/4 Inside/Dollhouse/Floor plan/Walk · Shift run · M measure · P tour · F1 stats · H hide · Esc menu";
 
         /// <summary>A floor's button label: its name in Matterport, else "Floor N".</summary>
         public static string FloorLabel(SpaceModel space, int floor)

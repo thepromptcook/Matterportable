@@ -14,7 +14,7 @@ ALLOWED = {
     "OnInspectorGUI",   # Unity editor callback
     "MpConvert",        # extension-method container (members are used)
     "LogExtensions",    # extension-method container (members are used)
-    "LookAt",           # public camera API for user scripts
+    "ViewModes",        # extension-method container (members are used)
     "_ExitTree",        # Godot callback
 }
 

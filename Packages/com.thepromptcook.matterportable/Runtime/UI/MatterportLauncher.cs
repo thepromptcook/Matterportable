@@ -16,7 +16,7 @@ namespace Matterportable
     [AddComponentMenu("Matterportable/Matterport Launcher")]
     public sealed class MatterportLauncher : MonoBehaviour
     {
-        const string LastLinkKey = "Matterportable.LastLink";
+        const string LastLinkKey = "Matterportable.LastLink", WalkKey = "Matterportable.Walk";
 
         [Tooltip("Settings for spaces opened from the menu.")]
         public ViewerSettings settings = new ViewerSettings();
@@ -24,6 +24,7 @@ namespace Matterportable
         public string defaultLink = "https://discover.matterport.com/space/rGMMnZDh3Tf";
 
         string _link;
+        bool _walk;
         bool _menuOpen = true;
         string _message;
         bool _busy;
@@ -42,6 +43,7 @@ namespace Matterportable
         void Start()
         {
             _link = PlayerPrefs.GetString(LastLinkKey, defaultLink);
+            _walk = PlayerPrefs.GetInt(WalkKey, 0) == 1;
             ShowMenu();
         }
 
@@ -83,10 +85,12 @@ namespace Matterportable
                 return;
             }
             PlayerPrefs.SetString(LastLinkKey, link.Trim());
+            PlayerPrefs.SetInt(WalkKey, _walk ? 1 : 0);
             PlayerPrefs.Save();
             _message = null;
             _rig?.Destroy();
             _rig = MatterportRig.Create(link.Trim(), "", settings);
+            _rig.Navigator.startMode = _walk ? ViewMode.Walk : ViewMode.Inside;
             _menuCamera.SetActive(false);
             _menuOpen = false;
         }
@@ -153,6 +157,7 @@ namespace Matterportable
             GUILayout.EndHorizontal();
             GUILayout.Space(8);
             if (GUILayout.Button("Open space", MpGui.Button, GUILayout.Height(40))) Open(_link);
+            _walk = GUILayout.Toggle(_walk, " Start in Walk mode: move freely with W A S D (walls and furniture block you)", MpGui.Toggle);
             if (Event.current.type == EventType.KeyDown && (Event.current.keyCode == KeyCode.Return || Event.current.keyCode == KeyCode.KeypadEnter))
             {
                 Event.current.Use();

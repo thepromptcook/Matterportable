@@ -202,5 +202,61 @@ namespace Matterportable.Tests
             Assert.AreEqual(1, v.Nav.CurrentSweep);
             CollectionAssert.IsEmpty(v.Nav.Markers, "markers hide while measuring");
         }
+
+        [Test]
+        public void WalkModeMovesFreelyAndTheWallsStopIt()
+        {
+            var v = new Viewer();
+            v.Frames(2);
+            v.Frames(1, new NavigatorInput { Pressed = NavKeys.Walk });
+            Assert.AreEqual(ViewMode.Walk, v.Nav.Mode);
+            v.Frames(180, new NavigatorInput { Held = NavKeys.Forward }); // facing +Z for 3 s
+            Assert.AreEqual(3 - v.Settings.BodyRadius, v.Nav.CameraPosition.Z, 0.03f, "stopped by the wall");
+            Assert.AreEqual(1f, v.Nav.CameraPosition.X, 0.01f);
+            Assert.AreEqual(1.49f, v.Nav.CameraPosition.Y, 0.01f, "eyes at the capture camera's height above the floor");
+            CollectionAssert.IsEmpty(v.Nav.Markers, "no sweep markers while walking");
+        }
+
+        [Test]
+        public void WalkingCrossFadesTheNearestPanoramasWithoutJumps()
+        {
+            var v = new Viewer();
+            v.Frames(2);
+            v.Nav.Teleport(0, 90); // facing +X, towards sweep 1
+            v.Nav.SetMode(ViewMode.Walk);
+            float Weight(int sweep)
+            {
+                var view = v.Nav.View;
+                return view.PanoA == sweep ? 1 - view.Blend : view.PanoB == sweep ? view.Blend : 0;
+            }
+            float last = Weight(1);
+            Assert.Less(last, 0.05f, "at sweep 0 its own photo shows");
+            for (int i = 0; i < 70; i++)
+            {
+                v.Frames(1, new NavigatorInput { Held = NavKeys.Forward });
+                Assert.Less(System.Math.Abs(Weight(1) - last), 0.15f, "no pops");
+                last = Weight(1);
+            }
+            Assert.Greater(last, 0.9f, "near sweep 1 its photo takes over");
+            Assert.AreEqual(1, v.Nav.CurrentSweep);
+        }
+
+        [Test]
+        public void WalkModeFromDollhouseAndBackToInside()
+        {
+            var v = new Viewer(start: 1);
+            v.Frames(2);
+            v.Nav.SetMode(ViewMode.Dollhouse);
+            v.Frames(80);
+            v.Nav.SetMode(ViewMode.Walk);
+            v.Frames(80);
+            Assert.AreEqual(ViewMode.Walk, v.Nav.Mode, "flew in, then walks");
+            Assert.Less((v.Nav.CameraPosition - v.Space.Sweeps[1].Position).Length, 0.02f);
+            v.Frames(30, new NavigatorInput { Held = NavKeys.Left });
+            v.Nav.SetMode(ViewMode.Inside);
+            v.Frames(80);
+            Assert.AreEqual(ViewMode.Inside, v.Nav.Mode);
+            Assert.Less((v.Nav.CameraPosition - v.Space.Sweeps[v.Nav.CurrentSweep].Position).Length, 1e-3f, "moved to the nearest sweep");
+        }
     }
 }

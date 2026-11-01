@@ -5,10 +5,11 @@ import * as THREE from 'three';
 import { coreOf, fromCore, quatFromCore } from './Core.js';
 import { SweepMarkers } from './SweepMarkers.js';
 
-export const ViewMode = { Inside: 0, Dollhouse: 1, Floorplan: 2 };
-const K = { Inside: 1, Dollhouse: 2, Floorplan: 4, Forward: 8, Back: 16, Left: 32, Right: 64, TurnLeft: 128, TurnRight: 256, Next: 512, Previous: 1024, Home: 2048, FloorUp: 4096, FloorDown: 8192, Tour: 16384, DebugView: 32768 };
-const PressedKeys = { Digit1: K.Inside, Digit2: K.Dollhouse, Digit3: K.Floorplan, KeyW: K.Forward, ArrowUp: K.Forward, KeyS: K.Back, ArrowDown: K.Back, KeyA: K.Left, KeyD: K.Right, BracketRight: K.Next, BracketLeft: K.Previous, Home: K.Home, PageUp: K.FloorUp, PageDown: K.FloorDown, KeyP: K.Tour, F2: K.DebugView };
-const HeldKeys = { ArrowLeft: K.TurnLeft, KeyQ: K.TurnLeft, ArrowRight: K.TurnRight, KeyE: K.TurnRight, KeyW: K.Forward, ArrowUp: K.Forward, KeyS: K.Back, ArrowDown: K.Back, KeyA: K.Left, KeyD: K.Right };
+export const ViewMode = { Inside: 0, Dollhouse: 1, Floorplan: 2, Walk: 3 };
+const K = { Inside: 1, Dollhouse: 2, Floorplan: 4, Forward: 8, Back: 16, Left: 32, Right: 64, TurnLeft: 128, TurnRight: 256, Next: 512, Previous: 1024, Home: 2048, FloorUp: 4096, FloorDown: 8192, Tour: 16384, DebugView: 32768, Walk: 65536, Run: 131072 };
+const PressedKeys = { Digit1: K.Inside, Digit2: K.Dollhouse, Digit3: K.Floorplan, Digit4: K.Walk, KeyW: K.Forward, ArrowUp: K.Forward, KeyS: K.Back, ArrowDown: K.Back, KeyA: K.Left, KeyD: K.Right, BracketRight: K.Next, BracketLeft: K.Previous, Home: K.Home, PageUp: K.FloorUp, PageDown: K.FloorDown, KeyP: K.Tour, F2: K.DebugView };
+const HeldKeys = { ArrowLeft: K.TurnLeft, KeyQ: K.TurnLeft, ArrowRight: K.TurnRight, KeyE: K.TurnRight, KeyW: K.Forward, ArrowUp: K.Forward, KeyS: K.Back, ArrowDown: K.Back, KeyA: K.Left, KeyD: K.Right, ShiftLeft: K.Run, ShiftRight: K.Run };
+export const NavKeys = K;
 const ButtonBit = [1, 4, 2]; // DOM button 0 left, 1 middle, 2 right -> Core bits (1 left, 2 right, 4 middle)
 
 export class MatterportNavigator {
@@ -19,6 +20,7 @@ export class MatterportNavigator {
     this.down = this.up = this.buttons = this.scroll = this.pressed = 0;
     this.keys = new Set();
     this.onKey = null; // extra key handler (measure, HUD): return true to consume
+    this.scriptedHeld = 0; // keys held by a script (automated checks), as if pressed
     this.frame = null;
     this.raycaster = new THREE.Raycaster();
     camera.near = 0.03;
@@ -60,7 +62,7 @@ export class MatterportNavigator {
   /** Runs the Core Navigator for one frame; returns the decoded frame (camera, binding, markers, commands). */
   update(dt) {
     this.markers.beginFrame();
-    let held = 0;
+    let held = this.scriptedHeld;
     for (const code of this.keys) held |= HeldKeys[code] ?? 0;
     const p = this.pointer, height = this.canvas.clientHeight;
     const { origin, dir } = this.screenRay(p.x, p.y);
@@ -73,6 +75,7 @@ export class MatterportNavigator {
       blend: o[19], projection: o[20], useDepth: o[21], debugView: o[22], validA: o[23], validB: o[24], clipHeight: o[25],
       floorCount: o[26], viewClipHeight: o[27], activeLoads: o[28], queued: o[29], commands: [],
     };
+    this.coreCamera = [o[0], o[1], o[2]]; // Core frame, for reports
     this.camera.position.copy(fromCore(o, 0));
     this.camera.quaternion.copy(quatFromCore(o, 3));
     this.camera.fov = o[7];
@@ -95,6 +98,8 @@ export class MatterportNavigator {
   setFloor(floor) { this.core.Navigate(2, floor, 0, 0); }
   /** Jumps instantly, looking along yaw/pitch in degrees (Core convention: yaw clockwise, pitch down). */
   teleport(sweep, yaw, pitch) { this.core.Navigate(3, sweep, yaw, pitch); }
+  /** Turns the view instantly (Core convention, degrees). */
+  look(yaw, pitch = 0) { this.core.Navigate(8, 0, yaw, pitch); }
   toggleTour() { this.core.Navigate(4, 0, 0, 0); }
   setDebugView(view) { this.core.Navigate(5, view, 0, 0); }
   setMeasuring(on) { this.core.Navigate(6, on ? 1 : 0, 0, 0); }

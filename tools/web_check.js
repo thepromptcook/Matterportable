@@ -1,5 +1,5 @@
 // Drives the web version in headless Chromium (Playwright). Used by tools/web-check.sh.
-//   node tools/web_check.js <base url> <out dir> [extra query]          demo runs: inside (after a move), dollhouse, measure
+//   node tools/web_check.js <base url> <out dir> [extra query]          demo runs: inside (after a move), dollhouse, measure, walk
 //   node tools/web_check.js <base url> <out dir> --compare <id> [sweeps] photo-vs-mesh pairs for tools/compare_alignment.py
 const { chromium } = require('playwright');
 
@@ -38,12 +38,12 @@ async function openPage(browser, query, size) {
     failed = errors.length > 0;
   } else {
     const extra = rest.join('&');
-    const runs = [['inside', 'goto=1'], ['dollhouse', 'mode=dollhouse'], ['measure', 'measure=1']];
+    const runs = [['inside', 'goto=1'], ['dollhouse', 'mode=dollhouse'], ['measure', 'measure=1'], ['walk', 'mode=walk&yaw=54&walk=1']];
     for (const [name, query] of runs) {
       const { page, errors } = await openPage(browser, `?open=demo&${query}${extra ? '&' + extra : ''}`, { width: 1600, height: 900 });
       const checks = await page.evaluate(() => window.mp.checks ?? window.mp.error);
       await page.screenshot({ path: `${out}/${name}.png` });
-      const expect = name === 'measure' ? '1 measurement(s), drawing yes, menu closed' : 'Loaded';
+      const expect = { measure: '1 measurement(s), drawing yes, menu closed', walk: 'mode Walk' }[name] ?? 'Loaded';
       const ok = errors.length === 0 && String(checks).includes(expect);
       console.log(`${ok ? '' : 'error: '}[Matterportable] ${checks}\n  screenshot: ${out}/${name}.png` + (errors.length ? `\n  page errors: ${errors.join(' | ')}` : ''));
       if (!ok) failed = true;

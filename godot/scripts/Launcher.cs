@@ -8,9 +8,10 @@ namespace Matterportable
 {
     /// <summary>
     /// The start menu (mirrors the Unity MatterportLauncher): paste a Matterport link, open the offline demo or a
-    /// downloaded space. Esc or the Menu button returns here. Command line (after "--"): --open &lt;link|demo&gt;,
-    /// --sweep N, --mode inside|dollhouse|floorplan, --view N (F2 render view), --goto N (move there after loading), --measure (draws a measurement), --compare dir [--compare-sweeps N] (see RunCompare),
-    /// --screenshot file.png (quits after saving), for headless checks.
+    /// downloaded space, optionally in Walk mode. Esc or the Menu button returns here. Command line (after "--"):
+    /// --open &lt;link|demo&gt;, --sweep N, --mode inside|dollhouse|floorplan|walk, --yaw degrees, --view N (F2 render view),
+    /// --goto N (move there after loading), --walk seconds (hold W), --measure (draws a measurement),
+    /// --compare dir [--compare-sweeps N] (see RunCompare), --screenshot file.png (quits after saving), for headless checks.
     /// </summary>
     public partial class Launcher : Node
     {
@@ -19,6 +20,7 @@ namespace Matterportable
         Control _menu;
         LineEdit _link;
         Label _status;
+        CheckBox _walkMode;
         ItemList _spaces;
         MatterportSpace _space;
         MatterportNavigator _nav;
@@ -30,6 +32,8 @@ namespace Matterportable
         string _mode;
         int _view = -1, _goto = -1;
         int _screenshotFrames = -1;
+        float _yaw = float.NaN, _walk;
+        bool _walking;
 
         public override void _Ready()
         {
@@ -44,6 +48,8 @@ namespace Matterportable
                 if (args[i] == "--mode") _mode = args[i + 1];
                 if (args[i] == "--view") int.TryParse(args[i + 1], out _view);
                 if (args[i] == "--goto") int.TryParse(args[i + 1], out _goto);
+                if (args[i] == "--yaw") float.TryParse(args[i + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _yaw);
+                if (args[i] == "--walk") float.TryParse(args[i + 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _walk);
                 if (args[i] == "--screenshot") _screenshot = args[i + 1];
                 if (args[i] == "--compare") _compare = args[i + 1];
                 if (args[i] == "--compare-sweeps") int.TryParse(args[i + 1], out _compareSweeps);
@@ -75,6 +81,7 @@ namespace Matterportable
             row.AddChild(_link);
             row.AddChild(MakeButton("Paste", () => _link.Text = DisplayServer.ClipboardGet().Trim()));
             box.AddChild(MakeButton("Open space", () => Open(_link.Text, 0)));
+            box.AddChild(_walkMode = new CheckBox { Text = "Start in Walk mode: move freely with W A S D (walls and furniture block you)" });
             box.AddChild(MakeButton("Offline demo (no network)", () => OpenDemo(0)));
             _status = new Label { HorizontalAlignment = HorizontalAlignment.Center, AutowrapMode = TextServer.AutowrapMode.WordSmart };
             box.AddChild(_status);
@@ -84,7 +91,11 @@ namespace Matterportable
             box.AddChild(_spaces);
 
             var cfg = new ConfigFile();
-            if (cfg.Load(ConfigPath) == Error.Ok) _link.Text = (string)cfg.GetValue("launcher", "last_link", "");
+            if (cfg.Load(ConfigPath) == Error.Ok)
+            {
+                _link.Text = (string)cfg.GetValue("launcher", "last_link", "");
+                _walkMode.ButtonPressed = (bool)cfg.GetValue("launcher", "walk", false);
+            }
             RefreshSpaces();
         }
 
@@ -131,6 +142,7 @@ namespace Matterportable
             var cfg = new ConfigFile();
             cfg.Load(ConfigPath);
             cfg.SetValue("launcher", "last_link", link);
+            cfg.SetValue("launcher", "walk", _walkMode.ButtonPressed);
             cfg.Save(ConfigPath);
 
             CloseSpace();
@@ -139,7 +151,8 @@ namespace Matterportable
             _measure = new MatterportMeasure { Name = "Measure", Space = _space, Navigator = _nav };
             _hud = new Hud { Space = _space, Navigator = _nav, Measure = _measure };
             _hud.MenuRequested += ShowMenu;
-            _nav.StartMode = _mode == "dollhouse" ? ViewMode.Dollhouse : _mode == "floorplan" ? ViewMode.Floorplan : ViewMode.Inside;
+            _nav.StartMode = _mode == "dollhouse" ? ViewMode.Dollhouse : _mode == "floorplan" ? ViewMode.Floorplan
+                : _mode == "walk" || (_mode == null && _walkMode.ButtonPressed) ? ViewMode.Walk : ViewMode.Inside;
             AddChild(_space);
             AddChild(_nav);
             AddChild(_measure);
@@ -243,6 +256,7 @@ namespace Matterportable
         {
             var nav = _nav?.Core;
             if (nav != null && _view >= 0) { nav.DebugView = _view; _view = -1; }
+            if (nav != null && !float.IsNaN(_yaw)) { nav.Look(_yaw); _yaw = float.NaN; }
             if (_compare != null && nav != null && nav.CurrentSweep >= 0)
             {
                 var dir = _compare;
@@ -264,13 +278,21 @@ namespace Matterportable
                 MeasureDemo();
                 return;
             }
+            if (_walk > 0 && nav.Mode == ViewMode.Walk && (_walking || _space.Scheduler.ActiveLoads == 0))
+            {
+                _walking = true; // hold W for the given time, from when the first panoramas are in
+                _walk -= (float)delta;
+                _nav.ScriptedHeld = _walk > 0 ? NavKeys.Forward : NavKeys.None;
+                return;
+            }
             if (_screenshotFrames < 0 && !nav.IsMoving && !nav.IsWaitingForPanorama && _goto < 0 && _space.Scheduler.ActiveLoads == 0 && _space.Scheduler.Queued == 0 && !nav.IsChangingMode && _space.TexturesLoaded >= _space.Model.Manifest.Textures.Count)
                 _screenshotFrames = 30;
             if (_screenshotFrames > 0 && --_screenshotFrames == 0)
             {
                 var err = GetViewport().GetTexture().GetImage().SavePng(_screenshot);
                 var measured = _measure.Tool == null ? "" : $"; {_measure.Tool.Lines.Count} measurement(s), drawing {(_measure.Tool.Draft != null ? "yes" : "no")}, menu {(_menu.Visible ? "open" : "closed")}";
-                GD.Print($"[Matterportable] {_space.Status}; mode {nav.Mode}, sweep {nav.CurrentSweep}{measured}; screenshot {(err == Error.Ok ? "saved" : "failed: " + err)}");
+                var at = nav.CameraPosition;
+                GD.Print($"[Matterportable] {_space.Status}; mode {nav.Mode}, sweep {nav.CurrentSweep}, camera ({at.X:0.00}, {at.Y:0.00}, {at.Z:0.00}){measured}; screenshot {(err == Error.Ok ? "saved" : "failed: " + err)}");
                 GetTree().Quit(err == Error.Ok ? 0 : 1);
             }
         }

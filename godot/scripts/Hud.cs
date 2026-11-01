@@ -35,6 +35,7 @@ namespace Matterportable
                 MakeButton("Inside", () => Nav?.SetMode(ViewMode.Inside)),
                 MakeButton("Dollhouse", () => Nav?.SetMode(ViewMode.Dollhouse)),
                 MakeButton("Floor plan", () => Nav?.SetMode(ViewMode.Floorplan)),
+                MakeButton("Walk", () => Nav?.SetMode(ViewMode.Walk)),
             };
             foreach (var b in _modes) { b.ToggleMode = true; bar.AddChild(b); }
             bar.AddChild(_measure = MakeButton("📏 Measure", () => Measure.SetActive(!Measure.Active)));
@@ -68,7 +69,7 @@ namespace Matterportable
             for (int i = 0; i < _modes.Length; i++) _modes[i].SetPressedNoSignal((int)Nav.Mode == i);
             _tour.Text = Nav.AutoTour ? "■ Tour" : "▶ Tour";
             _measure.SetPressedNoSignal(Measure.Active);
-            _measure.Visible = Space.Model.Geometry != null;
+            _measure.Visible = _modes[3].Visible = Space.Model.Geometry != null; // both need the mesh
             if (_floorCount != Space.Model.FloorCount) BuildFloorButtons();
             _floors.Visible = Nav.Mode != ViewMode.Inside && Space.Model.FloorCount > 1;
             if (_stats.Visible) _stats.Text = ViewerText.Stats(Space.Model, Nav, Space.Scheduler, Engine.GetFramesPerSecond(), Space.LastLoadSeconds, Space.TexturesLoaded);

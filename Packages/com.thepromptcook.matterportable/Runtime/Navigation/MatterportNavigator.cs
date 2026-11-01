@@ -6,8 +6,9 @@ namespace Matterportable
 {
     /// <summary>
     /// The camera, driven by the Core <see cref="Navigator"/> (mirrors the Godot MatterportNavigator): reads Unity
-    /// input, runs the shared Matterport-style navigation (drag to look, click to move, W/A/S/D, wheel zoom, Dollhouse
-    /// and Floor plan) in the space's local frame, and applies the camera pose, markers and view binding.
+    /// input, runs the shared Matterport-style navigation (drag to look, click to move, W/A/S/D, wheel zoom, Dollhouse,
+    /// Floor plan, and Walk mode with collisions) in the space's local frame, and applies the camera pose, markers and
+    /// view binding.
     /// Put it on the camera; it finds the <see cref="MatterportSpace"/> automatically.
     /// </summary>
     [RequireComponent(typeof(Camera))]
@@ -19,6 +20,8 @@ namespace Matterportable
         public MatterportSpace space;
         public bool enableMouse = true;
         public bool enableKeyboard = true;
+        [Tooltip("Mode to start in. Walk: move freely with W A S D; walls, floors, stairs and furniture are solid.")]
+        public ViewMode startMode = ViewMode.Inside;
 
         /// <summary>Navigation state and actions (GoTo, SetMode, SetFloor, AutoTour…); null until the space has loaded.</summary>
         public Navigator Core { get; private set; }
@@ -30,7 +33,7 @@ namespace Matterportable
 
         static readonly (KeyCode key, NavKeys nav)[] PressedKeys =
         {
-            (KeyCode.Alpha1, NavKeys.Inside), (KeyCode.Alpha2, NavKeys.Dollhouse), (KeyCode.Alpha3, NavKeys.Floorplan),
+            (KeyCode.Alpha1, NavKeys.Inside), (KeyCode.Alpha2, NavKeys.Dollhouse), (KeyCode.Alpha3, NavKeys.Floorplan), (KeyCode.Alpha4, NavKeys.Walk),
             (KeyCode.W, NavKeys.Forward), (KeyCode.UpArrow, NavKeys.Forward), (KeyCode.S, NavKeys.Back), (KeyCode.DownArrow, NavKeys.Back),
             (KeyCode.A, NavKeys.Left), (KeyCode.D, NavKeys.Right), (KeyCode.RightBracket, NavKeys.Next), (KeyCode.LeftBracket, NavKeys.Previous),
             (KeyCode.Home, NavKeys.Home), (KeyCode.PageUp, NavKeys.FloorUp), (KeyCode.PageDown, NavKeys.FloorDown), (KeyCode.P, NavKeys.Tour),
@@ -40,7 +43,7 @@ namespace Matterportable
         {
             (KeyCode.LeftArrow, NavKeys.TurnLeft), (KeyCode.Q, NavKeys.TurnLeft), (KeyCode.RightArrow, NavKeys.TurnRight), (KeyCode.E, NavKeys.TurnRight),
             (KeyCode.W, NavKeys.Forward), (KeyCode.UpArrow, NavKeys.Forward), (KeyCode.S, NavKeys.Back), (KeyCode.DownArrow, NavKeys.Back),
-            (KeyCode.A, NavKeys.Left), (KeyCode.D, NavKeys.Right),
+            (KeyCode.A, NavKeys.Left), (KeyCode.D, NavKeys.Right), (KeyCode.LeftShift, NavKeys.Run), (KeyCode.RightShift, NavKeys.Run),
         };
 
         Camera _cam;
@@ -67,7 +70,7 @@ namespace Matterportable
             if (Core == null || _scheduler != space.Scheduler)
             {
                 _scheduler = space.Scheduler;
-                Core = new Navigator(space.Model, space.settings, _scheduler) { StartSweep = space.startSweep };
+                Core = new Navigator(space.Model, space.settings, _scheduler) { StartSweep = space.startSweep, StartMode = startMode };
                 if (_markers == null) _markers = new SweepMarkers();
                 _cam.clearFlags = CameraClearFlags.Skybox;
                 _cam.nearClipPlane = 0.03f;
