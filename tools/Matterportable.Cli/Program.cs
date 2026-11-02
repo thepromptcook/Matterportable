@@ -113,7 +113,7 @@ Commands:
         static int Demo(Options o)
         {
             int size = int.Parse(o.Get("size", "1024"), CultureInfo.InvariantCulture);
-            var space = SyntheticSpace.Generate(new SyntheticOptions { PanoSizes = new[] { Math.Max(32, size / 4), size } });
+            var space = SyntheticSpace.Generate(new SyntheticOptions { PanoSizes = new[] { Math.Max(32, size / 4), size }, CleanPhotos = true });
             var dir = CacheLayout.SpaceDir(o.Get("out", CacheLayout.DefaultFolderName), space.Manifest.ModelId);
             space.WriteTo(dir);
             Console.WriteLine($"Demo space written to {dir}");

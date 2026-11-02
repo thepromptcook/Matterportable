@@ -21,13 +21,14 @@ namespace Matterportable
         public static async Task<string> EnsureAsync(string cacheFolder, int faceSize, bool regenerate, CancellationToken ct)
         {
             var dir = MatterportPaths.SpaceDir(cacheFolder, ModelId);
-            if (!regenerate && SpaceManifest.Exists(dir)) return dir;
+            if (!regenerate && SpaceManifest.Exists(dir) && File.Exists(Path.Combine(dir, CleanPanoramas.Folder, "clean.json"))) return dir; // (older demos lack the clean photos)
             var options = new SyntheticOptions
             {
                 ModelId = ModelId,
                 PanoSizes = new[] { Math.Max(64, faceSize / 4), faceSize },
                 TextureSize = Math.Max(128, faceSize / 2),
                 ImageExtension = "jpg",
+                CleanPhotos = true,
             };
             var space = await Task.Run(() => SyntheticSpace.Generate(options), ct);
             if (Directory.Exists(dir)) Directory.Delete(dir, true);

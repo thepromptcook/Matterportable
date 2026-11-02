@@ -95,6 +95,43 @@ namespace Matterportable.Tests
         }
 
         [Test]
+        public void TheDemoHouseWritesExactCleanPhotos()
+        {
+            var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mpt-demo-clean-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var space = SyntheticSpace.Generate(new SyntheticOptions { PanoSizes = new[] { 16, 64 }, TextureSize = 64, CleanPhotos = true });
+                space.WriteTo(dir);
+                var model = SpaceModel.Load(dir, SpaceManifest.Load(dir), SpaceCalibration.LoadOrDefault(dir), null);
+                Assert.Greater(model.Props.Count, 0);
+                Assert.IsTrue(model.HasCleanPanoramas, "every sweep that sees furniture has clean photos");
+                int changed = 0, unpainted = 0;
+                for (int s = 0; s < model.Sweeps.Count; s++)
+                {
+                    var sweep = model.Sweeps[s];
+                    if (sweep.CleanFaces == null) continue;
+                    var painted = CleanPanoramas.LoadPainted(dir, sweep.PaintedProps, out int size);
+                    for (int f = 0; f < 6; f++)
+                    {
+                        var photo = space.Panoramas[s][1][f];
+                        var clean = space.CleanFaces[s][f];
+                        for (int y = 0; y < 64; y++)
+                            for (int x = 0; x < 64; x++)
+                            {
+                                int i = 3 * (y * 64 + x);
+                                if (photo.Pixels[i] == clean.Pixels[i] && photo.Pixels[i + 1] == clean.Pixels[i + 1] && photo.Pixels[i + 2] == clean.Pixels[i + 2]) continue;
+                                changed++;
+                                if (painted[f * size * size + (y * size / 64) * size + x * size / 64] == 0) unpainted++;
+                            }
+                    }
+                }
+                Assert.Greater(changed, 100, "the furniture is gone from the clean photos");
+                Assert.Less(unpainted, changed / 50, "and the painted maps say where");
+            }
+            finally { try { System.IO.Directory.Delete(dir, true); } catch (System.IO.IOException) { } }
+        }
+
+        [Test]
         public void CleanPhotosReplaceOnlyThePaintedFaces()
         {
             var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mpt-clean-" + Guid.NewGuid().ToString("N"));

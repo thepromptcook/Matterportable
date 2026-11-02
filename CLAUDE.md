@@ -214,7 +214,9 @@ navigator.
     `mpClean`). The room (piece 0) samples the clean photo where the painted map names a moved prop
     (`MP_PaintedMoved`: the photo shows a prop wider than the scan, thin legs and backs) or the depth test hid it, and
     everywhere in empty rooms. The sky does the same: the scan has holes behind furniture, and through them the sky
-    showed the photo's chair.
+    showed the photo's chair. The demo house writes exact clean photos (`SyntheticOptions.CleanPhotos`: rendered
+    again without the props the viewers find, after finding them), so the demo shows no ghost at all; the demo
+    writers regenerate a demo without `recon/clean/clean.json`.
 - **Reconstruction** (offline, toward a clean 3D rebuild of the house; see the from-scratch skill's plan): Python in
   `tools/reconstruct/`, pre-trained models only, CPU now and GPU later. Step 2: `PropMasks.PieceMask` (Core)
   ray-casts which prop each panorama pixel shows (CLI `masks`), counting room surfaces within 12 cm of a prop

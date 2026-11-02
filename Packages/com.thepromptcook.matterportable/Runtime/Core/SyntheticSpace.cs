@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace Matterportable.Core
@@ -18,6 +19,9 @@ namespace Matterportable.Core
         public bool QuantizedMesh;
         public bool RandomRotations = true;
         public string ImageExtension = "png";
+        /// <summary>Also render every sweep without its furniture, written as the space's clean photos
+        /// (<see cref="CleanPanoramas"/>): exact, where a real space's are painted in.</summary>
+        public bool CleanPhotos;
     }
 
     /// <summary>
@@ -36,6 +40,9 @@ namespace Matterportable.Core
         public SpaceManifest Manifest;
         /// <summary>Per sweep, per tier (ascending), six faces in source order.</summary>
         public List<List<RgbImage[]>> Panoramas = new List<List<RgbImage[]>>();
+        /// <summary>With <see cref="SyntheticOptions.CleanPhotos"/>, once written: per sweep, the largest tier's faces
+        /// without the props the viewers find.</summary>
+        public List<RgbImage[]> CleanFaces = new List<RgbImage[]>();
         /// <summary>World-from-pano rotation actually used for each sweep (Unity space).</summary>
         public List<Mat3> TrueRotations = new List<Mat3>();
 
@@ -420,8 +427,9 @@ namespace Matterportable.Core
 
         static double[] ToArray(Vec3 v) => new double[] { v.X, v.Y, v.Z };
 
-        RgbImage[] RenderPano(Vec3 origin, Mat3 worldFromPano, FaceBasis[] layout, int size)
+        RgbImage[] RenderPano(Vec3 origin, Mat3 worldFromPano, FaceBasis[] layout, int size, SpaceGeometry geo = null, bool[] skip = null)
         {
+            geo = geo ?? Geometry;
             var faces = new RgbImage[6];
             var light = new Vec3(0.3f, 1f, 0.2f).Normalized;
             for (int f = 0; f < 6; f++)
@@ -435,11 +443,11 @@ namespace Matterportable.Core
                         var local = basis.Direction((x + 0.5f) / size, (y + 0.5f) / size);
                         var d = (worldFromPano * local).Normalized;
                         float r, g, b;
-                        if (Geometry.Bvh.Raycast(origin, d, 100f, out var hit))
+                        if (geo.Bvh.Raycast(origin, d, 100f, out var hit, skip))
                         {
-                            var uv = Geometry.UvAt(hit, out int part);
+                            var uv = geo.UvAt(hit, out int part);
                             // Geometry UVs are already corrected to Unity's convention.
-                            Textures[Geometry.Parts[part].Material].SampleWrapped(uv.X, uv.Y, out r, out g, out b);
+                            Textures[geo.Parts[part].Material].SampleWrapped(uv.X, uv.Y, out r, out g, out b);
                             float shade = 0.78f + 0.22f * Math.Abs(Vec3.Dot(hit.Normal, light));
                             shade *= 1f - Math.Min(0.25f, hit.Distance * 0.015f);
                             r *= shade; g *= shade; b *= shade;
@@ -475,6 +483,43 @@ namespace Matterportable.Core
                 cal.Method = SpaceCalibration.Synthetic;
                 cal.Save(spaceDir);
             }
+            if (Options.CleanPhotos && writeCalibration) WriteCleanPhotos(spaceDir, encode);
+        }
+
+        /// <summary>The clean photos as the reconstruction writes them (recon/clean: faces, painted-prop maps from the
+        /// props the viewers find, clean.json), so the demo shows what a perfect reconstruction would.</summary>
+        void WriteCleanPhotos(string spaceDir, Func<RgbImage, byte[]> encode)
+        {
+            var model = SpaceModel.Load(spaceDir, SpaceManifest.Load(spaceDir), SpaceCalibration.LoadOrDefault(spaceDir), null); // finds the props
+            var pieces = model.PieceOfTriangle;
+            var skip = new bool[pieces.Length];
+            for (int t = 0; t < skip.Length; t++) skip[t] = pieces[t] > 0;
+            int size = Options.PanoSizes.Max();
+            CleanFaces.Clear();
+            for (int s = 0; s < SweepPositions.Length; s++)
+                CleanFaces.Add(RenderPano(SweepPositions[s], TrueRotations[s], Options.Truth.Faces, size, model.Geometry, skip));
+            const int mapSize = 256;
+            var faces = JsonValue.NewArray();
+            for (int s = 0; s < CleanFaces.Count; s++)
+                for (int f = 0; f < 6; f++)
+                {
+                    var mask = PropMasks.PieceMask(model, s, f, mapSize);
+                    var map = new RgbImage(mapSize, mapSize);
+                    bool any = false;
+                    for (int i = 0; i < mask.Length; i++)
+                    {
+                        if (mask[i] <= 0 || mask[i] > 255) continue;
+                        map.Set(i % mapSize, i / mapSize, (byte)mask[i], (byte)mask[i], (byte)mask[i]);
+                        any = true;
+                    }
+                    if (!any) continue;
+                    var ext = Options.ImageExtension;
+                    string file = $"{s:D3}/face{f}.{ext}", painted = $"{s:D3}/painted{f}.png";
+                    IoUtil.WriteAllBytesAtomic(Path.Combine(spaceDir, CleanPanoramas.Folder, file), encode(CleanFaces[s][f]));
+                    IoUtil.WriteAllBytesAtomic(Path.Combine(spaceDir, CleanPanoramas.Folder, painted), Png.Encode(map));
+                    faces.Add(JsonValue.NewObject().Set("sweep", s).Set("face", f).Set("file", file).Set("painted", painted));
+                }
+            IoUtil.WriteAllTextAtomic(Path.Combine(spaceDir, CleanPanoramas.Folder, "clean.json"), JsonValue.NewObject().Set("faces", faces).ToJson(true));
         }
 
         /// <summary>Builds solver input straight from memory (no files), as if decoded from disk.</summary>
