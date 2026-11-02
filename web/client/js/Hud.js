@@ -1,5 +1,5 @@
-// Mirrors MatterportHud (Unity) / Hud (Godot): view modes, floors, measure, tour, menu, key hint, Walk mode's hint for
-// the prop under the pointer, F1 stats (text from Core ViewerText through the WebAssembly bridge).
+// Mirrors MatterportHud (Unity) / Hud (Godot): view modes, floors, measure, tour, empty rooms, menu, key hint, Walk
+// mode's hint for the prop under the pointer, F1 stats (text from Core ViewerText through the WebAssembly bridge).
 import { ViewMode } from './MatterportNavigator.js';
 
 export class Hud {
@@ -11,9 +11,11 @@ export class Hud {
     this.modes = ['Inside', 'Dollhouse', 'Floor plan', 'Walk'].map((label, mode) => button(label, () => nav.setMode(mode)));
     this.measureButton = button('📏 Measure', () => measure.setActive(!measure.active));
     this.tour = button('▶ Tour', () => nav.toggleTour());
+    this.empty = button('', () => nav.setEmptyRooms(!nav.emptyRooms));
+    this.empty.hidden = !(space.hasCleanPanoramas && space.props.some((p) => p)); // the furniture painted out (tools/reconstruct)
     this.floors = el('floors');
     const bar = el('hud-buttons');
-    bar.append(button('☰ Menu', onMenu), ...this.modes, this.measureButton, this.tour, this.floors);
+    bar.append(button('☰ Menu', onMenu), ...this.modes, this.measureButton, this.tour, this.empty, this.floors);
     this.stats = el('stats panel');
     this.stats.hidden = true;
     this.status = el('status-center panel', 'Loading…');
@@ -53,6 +55,8 @@ export class Hud {
       this.propState = propState;
       this.propHint.textContent = sp.core.PropHint();
       this.propHint.hidden = !this.propHint.textContent;
+      this.empty.textContent = sp.core.EmptyRoomsButton();
+      this.empty.classList.toggle('on', nav.emptyRooms);
     }
     if (!this.stats.hidden) this.stats.textContent = sp.core.Stats(this.fps, sp.lastLoadSeconds, sp.texturesLoaded);
   }

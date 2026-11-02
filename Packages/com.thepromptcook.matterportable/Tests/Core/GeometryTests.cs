@@ -102,6 +102,19 @@ namespace Matterportable.Tests
         }
 
         [Test]
+        public void NearestFindsTheClosestTriangleWithinReach()
+        {
+            // Two floor squares side by side (triangles 0-1 at x < 0, 2-3 at x > 0).
+            var pos = new[] { new Vec3(-2, 0, -1), new Vec3(0, 0, -1), new Vec3(0, 0, 1), new Vec3(-2, 0, 1), new Vec3(2, 0, -1), new Vec3(2, 0, 1) };
+            var bvh = new Bvh(pos, new[] { 0, 1, 2, 0, 2, 3, 1, 4, 5, 1, 5, 2 });
+            Assert.Less(bvh.Nearest(new Vec3(-1, 0.1f, 0), 0.2f, null), 2, "the left square, 10 cm above it");
+            Assert.AreEqual(-1, bvh.Nearest(new Vec3(-1, 0.3f, 0), 0.2f, null), "out of reach");
+            var left = new[] { true, true, false, false };
+            Assert.GreaterOrEqual(bvh.Nearest(new Vec3(-0.1f, 0.05f, 0), 0.2f, left), 2, "skipping the left one: the right one, 10 cm away");
+            Assert.AreEqual(-1, bvh.Nearest(new Vec3(-1, 0.05f, 0), 0.2f, left));
+        }
+
+        [Test]
         public void ShaderRotationKeepsRotationsAndFixesMirrors()
         {
             var q = new Quat(0.2, -0.4, 0.1, 0.9).Normalized.ToMat3();

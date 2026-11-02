@@ -12,8 +12,8 @@ namespace Matterportable
     /// downloaded space, optionally in Walk mode. Esc or the Menu button returns here. Command line (after "--"):
     /// --open &lt;link|demo&gt;, --sweep N, --mode inside|dollhouse|floorplan|walk, --yaw degrees, --view N (F2 render view),
     /// --goto N (move there after loading), --walk seconds (hold W), --pitch degrees (with --yaw), --move-prop degrees
-    /// (Walk mode: picks up what the view is on, turns that far, puts it down, turns back half way), --measure (draws a
-    /// measurement),
+    /// (Walk mode: picks up what the view is on, turns that far, puts it down, turns back half way), --empty ("empty
+    /// rooms": the furniture hidden, the clean photos shown), --measure (draws a measurement),
     /// --compare dir [--compare-sweeps N] (see RunCompare), --fidelity dir (see RunFidelity), --depth N (depth cube size),
     /// --screenshot file.png (quits after saving; with --views 0,1,2: one file per render view, file_v0.png …), for
     /// headless checks.
@@ -40,7 +40,7 @@ namespace Matterportable
         int _screenshotFrames = -1;
         float _yaw = float.NaN, _walk, _pitch, _moveProp, _lookYaw;
         int _moveStep, _moveWait = 30, _moved = -1;
-        bool _walking;
+        bool _walking, _empty;
         string[] _views;
         int _viewIndex;
 
@@ -69,6 +69,7 @@ namespace Matterportable
                 if (args[i] == "--compare-sweeps") int.TryParse(args[i + 1], out _compareSweeps);
             }
             if (Array.IndexOf(args, "--measure") >= 0) _measureStep = 0;
+            _empty = Array.IndexOf(args, "--empty") >= 0;
             if (open == "demo") OpenDemo(sweep);
             else if (open != null) Open(open, sweep);
         }
@@ -356,6 +357,7 @@ namespace Matterportable
             var nav = _nav?.Core;
             if (nav != null && _view >= 0) { nav.DebugView = _view; _view = -1; }
             if (nav != null && !float.IsNaN(_yaw)) { nav.Look(_lookYaw = _yaw, _pitch); _yaw = float.NaN; }
+            if (nav != null && _empty && nav.CurrentSweep >= 0) { nav.SetEmptyRooms(true); _empty = false; }
             if (_compare != null && nav != null && nav.CurrentSweep >= 0)
             {
                 var dir = _compare;
@@ -395,7 +397,9 @@ namespace Matterportable
                 MovePropStep(nav);
                 return;
             }
-            if (_screenshotFrames < 0 && !nav.IsMoving && !nav.IsWaitingForPanorama && _goto < 0 && _space.Scheduler.ActiveLoads == 0 && _space.Scheduler.Queued == 0 && !nav.IsChangingMode && _space.TexturesLoaded >= _space.Model.Manifest.Textures.Count)
+            var view = nav.View; // and for the clean photos, when the room needs them
+            bool cleanPending = (nav.EmptyRooms || nav.Props?.AnyMoved == true) && view.PanoA >= 0 && _space.Model.Sweeps[view.PanoA].CleanFaces != null && view.CleanA < 0;
+            if (_screenshotFrames < 0 && !nav.IsMoving && !nav.IsWaitingForPanorama && _goto < 0 && _space.Scheduler.ActiveLoads == 0 && _space.Scheduler.Queued == 0 && !nav.IsChangingMode && _space.TexturesLoaded >= _space.Model.Manifest.Textures.Count && !cleanPending)
                 _screenshotFrames = 30;
             if (_screenshotFrames > 0 && _views != null && _viewIndex == 0 && nav.DebugView != int.Parse(_views[0])) nav.DebugView = int.Parse(_views[0]);
             if (_screenshotFrames > 0 && --_screenshotFrames == 0)

@@ -21,7 +21,7 @@ namespace Matterportable.Web
         }
 
         const string DemoId = "DemoSpace01";
-        static readonly string[] ServedFolders = { "panos/", "textures/" };
+        static readonly string[] ServedFolders = { "panos/", "textures/", CleanPanoramas.Folder + "/" };
         static readonly string[] ServedExtensions = { ".jpg", ".jpeg", ".png", ".webp" };
 
         readonly bool _allowDownloads;

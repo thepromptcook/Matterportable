@@ -39,8 +39,15 @@ Shader "Matterportable/Skybox"
                 float3 d = normalize(i.dir);
                 float3 lA = mul((float3x3)_MP_RotA, d);
                 float3 lB = mul((float3x3)_MP_RotB, d);
-                float3 cA = MP_SamplePano(_MP_PanoA, sampler_MP_PanoA, lA, ddx(lA), ddy(lA));
-                float3 cB = MP_SamplePano(_MP_PanoB, sampler_MP_PanoB, lB, ddx(lB), ddy(lB));
+                float3 lAdx = ddx(lA), lAdy = ddy(lA), lBdx = ddx(lB), lBdy = ddy(lB);
+                // Through the holes a moved prop leaves in the scan, the clean photos, like the room's.
+                bool cleanA = _MP_Clean.x > 0.5 && (_MP_Clean.z > 0.5 || MP_PaintedMoved(_MP_PaintedA, sampler_MP_PaintedA, lA));
+                bool cleanB = _MP_Clean.y > 0.5 && (_MP_Clean.z > 0.5 || MP_PaintedMoved(_MP_PaintedB, sampler_MP_PaintedB, lB));
+                float3 cA, cB;
+                if (cleanA) cA = MP_SamplePano(_MP_CleanA, sampler_MP_CleanA, lA, lAdx, lAdy);
+                else cA = MP_SamplePano(_MP_PanoA, sampler_MP_PanoA, lA, lAdx, lAdy);
+                if (cleanB) cB = MP_SamplePano(_MP_CleanB, sampler_MP_CleanB, lB, lBdx, lBdy);
+                else cB = MP_SamplePano(_MP_PanoB, sampler_MP_PanoB, lB, lBdx, lBdy);
 
                 float wA, wB;
                 MP_BlendWeights(_MP_State.x, _MP_Valid.x, _MP_Valid.y, wA, wB);

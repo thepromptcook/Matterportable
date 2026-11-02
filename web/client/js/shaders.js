@@ -1,36 +1,18 @@
 // Port of MatterportCommon.hlsl / matterport_common.gdshaderinc and the mesh, sky and marker shaders. Keep in sync.
 // Math runs in the Core frame (toCore mirrors three's Z). Photos are decoded flipped (imageOrientation: 'flipY'),
-// so V is bottom-up as in Core and Unity. Each panorama is six 2D textures (sampler arrays can't be indexed at run
-// time in WebGL); depth maps are cube render targets sampled by three.js world direction.
-const faceSamplers = (p) => [0, 1, 2, 3, 4, 5].map((i) => `uniform sampler2D pano${p}${i};`).join('\n');
-// samplePanoA/B(l): the panorama's colour in the panorama-local direction l (see mpSeamLod).
-const faceSample = (p, i) => `lod < 0.0 ? textureGrad(pano${p}${i}, uv, gx, gy).rgb : textureLod(pano${p}${i}, uv, lod).rgb`;
-const faceSwitch = (p) => `vec3 samplePano${p}Lod(vec3 l, float lod) {
-  int s; vec2 uv, gx, gy;
-  mpPanoCoords(l, vec3(0.0), vec3(0.0), s, uv, gx, gy);
-  if (s == 0) return ${faceSample(p, 0)};
-  if (s == 1) return ${faceSample(p, 1)};
-  if (s == 2) return ${faceSample(p, 2)};
-  if (s == 3) return ${faceSample(p, 3)};
-  if (s == 4) return ${faceSample(p, 4)};
-  return ${faceSample(p, 5)};
-}
-vec3 samplePano${p}(vec3 l) {
-  int s; vec2 uv, gx, gy;
-  mpPanoCoords(l, dFdx(l), dFdy(l), s, uv, gx, gy);
-  float lod = mpSeamLod(uv, gx, gy, float(textureSize(pano${p}0, 0).x));
-  if (s == 0) return ${faceSample(p, 0)};
-  if (s == 1) return ${faceSample(p, 1)};
-  if (s == 2) return ${faceSample(p, 2)};
-  if (s == 3) return ${faceSample(p, 3)};
-  if (s == 4) return ${faceSample(p, 4)};
-  return ${faceSample(p, 5)};
-}`;
-
+// so V is bottom-up as in Core and Unity. Each panorama is a six-layer texture array (WebGL has 16 texture units: six
+// 2D textures per photo would leave no room for the clean photos); depth maps are cube render targets sampled by
+// three.js world direction.
 export const common = `
 layout(location = 0) out highp vec4 mpColor;
-${faceSamplers('A')}
-${faceSamplers('B')}
+uniform highp sampler2DArray panoA;
+uniform highp sampler2DArray panoB;
+// The same sweeps' clean photos (furniture painted out), for the room behind moved props and "empty rooms", and which
+// prop each clean pixel had painted out (R8, point-sampled: prop + 1).
+uniform highp sampler2DArray cleanA;
+uniform highp sampler2DArray cleanB;
+uniform highp sampler2DArray paintedA;
+uniform highp sampler2DArray paintedB;
 uniform vec3 posA;          // three world position of sweep A
 uniform vec3 posB;
 uniform mat3 rotA;          // WorldFromPano of sweep A (Core frame): l = d * rotA is world -> panorama-local
@@ -39,6 +21,7 @@ uniform vec4 faceRight[6];  // per canonical face: right axis (xyz), source slic
 uniform vec4 faceUp[6];
 uniform vec4 mpState;       // x: blend A->B, y: projection amount, z: use depth, w: debug view
 uniform vec4 mpValid;       // x: pano A loaded, y: pano B loaded, z: clip height (world y)
+uniform vec4 mpClean;       // x: clean A bound, y: clean B bound, z: empty rooms (the room shows them everywhere)
 uniform vec3 mpBackground;
 uniform vec4 movedProps[64]; // 1 for each prop that has moved (prop i: element i / 4, component i % 4)
 
@@ -57,32 +40,40 @@ vec3 mpAxis(int face) {
   return v;
 }
 
-// Face slice, UV and analytic UV gradients for a panorama-local direction (no seams at face edges).
-void mpPanoCoords(vec3 l, vec3 ldx, vec3 ldy, out int slice, out vec2 uv, out vec2 gx, out vec2 gy) {
+// Texture-array coordinate (u, v, slice) and analytic UV gradients for a panorama-local direction (no seams at face
+// edges).
+void mpPanoCoords(vec3 l, vec3 ldx, vec3 ldy, out vec3 coord, out vec2 gx, out vec2 gy) {
   int face = mpFace(l);
   vec3 F = mpAxis(face);
   vec3 R = faceRight[face].xyz;
   vec3 U = faceUp[face].xyz;
   float m = max(dot(l, F), 1e-6);
   vec2 n = vec2(dot(l, R), dot(l, U));
-  uv = 0.5 * n / m + 0.5;
-  slice = int(faceRight[face].w + 0.5);
+  coord = vec3(0.5 * n / m + 0.5, faceRight[face].w);
   float k = 0.5 / (m * m);
   gx = (vec2(dot(ldx, R), dot(ldx, U)) * m - n * dot(ldx, F)) * k;
   gy = (vec2(dot(ldy, R), dot(ldy, U)) * m - n * dot(ldy, F)) * k;
 }
 
-// Panoramas are filtered with the analytic gradients (anisotropic, lod -1) - except in a thin band along the face
-// edges, where gradient sampling draws a dashed line along the seam (pixel quads there straddle two faces); there, an
-// explicit level of detail from the same gradients.
-float mpSeamLod(vec2 uv, vec2 gx, vec2 gy, float size) {
-  float footprint = max(length(gx), length(gy)) * size;
-  float edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)) * size;
-  return edge > 2.0 * footprint + 1.0 ? -1.0 : max(log2(footprint), 0.0);
+// A panorama sample, filtered with the analytic gradients (anisotropic) - except in a thin band along the face edges,
+// where gradient sampling draws a dashed line along the seam (pixel quads there straddle two faces); there, an explicit
+// level of detail from the same gradients. ldx, ldy: the direction's screen derivatives, taken outside any branch.
+vec3 mpSamplePano(highp sampler2DArray pano, vec3 l, vec3 ldx, vec3 ldy) {
+  vec3 coord;
+  vec2 gx, gy;
+  mpPanoCoords(l, ldx, ldy, coord, gx, gy);
+  float size = float(textureSize(pano, 0).x), footprint = max(length(gx), length(gy)) * size;
+  float edge = min(min(coord.x, 1.0 - coord.x), min(coord.y, 1.0 - coord.y)) * size;
+  if (edge > 2.0 * footprint + 1.0) return textureGrad(pano, coord, gx, gy).rgb;
+  return textureLod(pano, coord, max(log2(footprint), 0.0)).rgb;
 }
 
-${faceSwitch('A')}
-${faceSwitch('B')}
+vec3 mpSamplePanoLod(highp sampler2DArray pano, vec3 l, float lod) {
+  vec3 coord;
+  vec2 gx, gy;
+  mpPanoCoords(l, vec3(0.0), vec3(0.0), coord, gx, gy);
+  return textureLod(pano, coord, lod).rgb;
+}
 
 float mpVisibility(float stored, float dist) {
   float bias = 0.05 + 0.03 * dist;
@@ -111,6 +102,16 @@ float mpMoved(float piece) {
 // surfaces the prop stood in front of were never photographed.
 bool mpHides(vec2 texel, float piece) {
   return abs(texel.y - piece) > 0.5 && mpMoved(texel.y) > 0.5;
+}
+
+// Whether the clean photos painted out a moved prop at this panorama-local direction (0 where nothing was painted). The
+// photos show a prop wider than the scan does (thin legs and backs), so this, not the depth test, says where the clean
+// photo replaces the photo.
+bool mpPaintedMoved(highp sampler2DArray painted, vec3 l) {
+  vec3 coord;
+  vec2 gx, gy;
+  mpPanoCoords(l, vec3(0.0), vec3(0.0), coord, gx, gy);
+  return mpMoved(floor(textureLod(painted, coord, 0.0).r * 255.0 + 0.5)) > 0.5;
 }
 
 // Percentage-closer filtering, as MP_DepthVisibility in Unity and Godot: the visibility test on the four nearest texels
@@ -166,17 +167,24 @@ void main() {
   vec3 tex = texture(meshTex, vUv).rgb;
   vec3 dA = toCore(vWorld - posA);
   vec3 dB = toCore(vWorld - posB);
-  vec3 cA = samplePanoA(dA * rotA);
-  vec3 cB = samplePanoB(dB * rotB);
-  float visA = mpValid.x;
-  float visB = mpValid.y;
-  bool holeA = false; // a moved prop hid this point from sweep A
+  vec3 lA = dA * rotA, lB = dB * rotB;
+  vec3 lAdx = dFdx(lA), lAdy = dFdy(lA), lBdx = dFdx(lB), lBdy = dFdy(lB);
+  // The depth test: -1 where a moved (or hidden) prop hid the point from that sweep.
+  float a = 1.0, b = 1.0;
   if (mpState.z > 0.5) {
-    float a = mpDepthVisibility(depthA, vWorld - posA, length(dA), propId), b = mpDepthVisibility(depthB, vWorld - posB, length(dB), propId);
-    holeA = a < 0.0;
-    visA *= max(a, 0.0);
-    visB *= max(b, 0.0);
+    a = mpDepthVisibility(depthA, vWorld - posA, length(dA), propId);
+    b = mpDepthVisibility(depthB, vWorld - posB, length(dB), propId);
   }
+  // The room shows the clean photos (furniture painted out) where a moved prop was painted out or hid it, and everywhere
+  // in "empty rooms".
+  bool room = propId < 0.5;
+  bool useCleanA = room && mpClean.x > 0.5 && (a < 0.0 || mpClean.z > 0.5 || mpPaintedMoved(paintedA, lA));
+  bool useCleanB = room && mpClean.y > 0.5 && (b < 0.0 || mpClean.z > 0.5 || mpPaintedMoved(paintedB, lB));
+  vec3 cA = useCleanA ? mpSamplePano(cleanA, lA, lAdx, lAdy) : mpSamplePano(panoA, lA, lAdx, lAdy);
+  vec3 cB = useCleanB ? mpSamplePano(cleanB, lB, lBdx, lBdy) : mpSamplePano(panoB, lB, lBdx, lBdy);
+  float visA = mpValid.x * (a < 0.0 ? (useCleanA ? 1.0 : 0.0) : a);
+  float visB = mpValid.y * (b < 0.0 ? (useCleanB ? 1.0 : 0.0) : b);
+  bool holeA = a < 0.0 && !useCleanA; // no clean photo: fill from the photo's surroundings
   float wA, wB;
   mpBlendWeights(mpState.x, visA, visB, wA, wB);
   vec3 pano = (cA * wA + cB * wB) / max(wA + wB, 1e-5);
@@ -195,7 +203,7 @@ void main() {
         float a = float(k) * 0.7853982 + float(ring) * 0.39;
         vec3 dir = n + (u * cos(a) + v * sin(a)) * r;
         if (mpHides(textureLod(depthA, dir, 0.0).rg, propId)) continue;
-        sum += samplePanoALod(toCore(dir) * rotA, 3.0);
+        sum += mpSamplePanoLod(panoA, toCore(dir) * rotA, 3.0);
         found += 1.0;
       }
     }
@@ -219,14 +227,19 @@ void main() {
   gl_Position = (projectionMatrix * viewMatrix * w).xyww;
 }`;
 
-// Background where there is no mesh: the current panorama(s) by view direction, flat colour from outside.
+// Background where there is no mesh: the current panorama(s) by view direction, flat colour from outside. Through the
+// holes a moved prop leaves in the scan, the clean photos, like the room's.
 export const skyFragment = `
 ${common}
 varying vec3 vWorld;
 void main() {
   vec3 d = toCore(normalize(vWorld - cameraPosition));
-  vec3 cA = samplePanoA(d * rotA);
-  vec3 cB = samplePanoB(d * rotB);
+  vec3 lA = d * rotA, lB = d * rotB;
+  vec3 lAdx = dFdx(lA), lAdy = dFdy(lA), lBdx = dFdx(lB), lBdy = dFdy(lB);
+  bool useCleanA = mpClean.x > 0.5 && (mpClean.z > 0.5 || mpPaintedMoved(paintedA, lA));
+  bool useCleanB = mpClean.y > 0.5 && (mpClean.z > 0.5 || mpPaintedMoved(paintedB, lB));
+  vec3 cA = useCleanA ? mpSamplePano(cleanA, lA, lAdx, lAdy) : mpSamplePano(panoA, lA, lAdx, lAdy);
+  vec3 cB = useCleanB ? mpSamplePano(cleanB, lB, lBdx, lBdy) : mpSamplePano(panoB, lB, lBdx, lBdy);
   float wA, wB;
   mpBlendWeights(mpState.x, mpValid.x, mpValid.y, wA, wB);
   vec3 pano = (cA * wA + cB * wB) / max(wA + wB, 1e-5);

@@ -67,6 +67,8 @@ namespace Matterportable
         static readonly int IdFaceRight = Shader.PropertyToID("_MP_FaceRight"), IdFaceUp = Shader.PropertyToID("_MP_FaceUp");
         static readonly int IdValid = Shader.PropertyToID("_MP_Valid"), IdBackground = Shader.PropertyToID("_MP_Background");
         static readonly int IdSpaceToWorld = Shader.PropertyToID("_MP_SpaceToWorld"), IdMoved = Shader.PropertyToID("_MP_Moved");
+        static readonly int IdCleanA = Shader.PropertyToID("_MP_CleanA"), IdCleanB = Shader.PropertyToID("_MP_CleanB"), IdClean = Shader.PropertyToID("_MP_Clean");
+        static readonly int IdPaintedA = Shader.PropertyToID("_MP_PaintedA"), IdPaintedB = Shader.PropertyToID("_MP_PaintedB");
         readonly Vector4[] _moved = new Vector4[64]; // 1 per prop that has moved (prop i: element i / 4, component i % 4)
 
         SpaceMesh _mesh;
@@ -341,6 +343,12 @@ namespace Matterportable
             Shader.SetGlobalTexture(IdPanoB, Or(Panoramas.Faces(v.PanoB)));
             Shader.SetGlobalTexture(IdDepthA, Or(Panoramas.Depth(v.DepthA)));
             Shader.SetGlobalTexture(IdDepthB, Or(Panoramas.Depth(v.DepthB)));
+            Texture cleanA = Panoramas.Clean(v.CleanA), cleanB = Panoramas.Clean(v.CleanB);
+            Shader.SetGlobalTexture(IdCleanA, Or(cleanA));
+            Shader.SetGlobalTexture(IdCleanB, Or(cleanB));
+            Shader.SetGlobalTexture(IdPaintedA, Or(Panoramas.Painted(v.CleanA)));
+            Shader.SetGlobalTexture(IdPaintedB, Or(Panoramas.Painted(v.CleanB)));
+            Shader.SetGlobalVector(IdClean, new Vector4(cleanA != null ? 1f : 0f, cleanB != null ? 1f : 0f, v.EmptyRooms ? 1f : 0f, 0f));
             Shader.SetGlobalVector(IdPosA, SweepWorldPosition(v.PoseA));
             Shader.SetGlobalVector(IdPosB, SweepWorldPosition(v.PoseB));
             Shader.SetGlobalMatrix(IdRotA, WorldToPano(v.PoseA));

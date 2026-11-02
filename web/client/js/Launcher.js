@@ -2,8 +2,8 @@
 // demo or a space the server already has; Esc or Menu returns here. The server downloads and prepares spaces.
 // URL parameters drive automated checks (tools/web-check.sh): ?open=<link|demo>&sweep=N&mode=dollhouse|floorplan|walk
 // &yaw=degrees&pitch=degrees&view=N&goto=N&walk=seconds&measure=1&move=degrees (Walk mode: F on what the middle of the
-// view is on, turn that far, F again, turn back half way); window.mp reports state and offers showView() for the
-// photo-vs-mesh comparison.
+// view is on, turn that far, F again, turn back half way)&empty=1 ("empty rooms"); window.mp reports state and offers
+// showView() for the photo-vs-mesh comparison.
 import { MatterportSpace } from './MatterportSpace.js';
 import { MatterportNavigator, ViewMode, NavKeys } from './MatterportNavigator.js';
 import { MatterportMeasure } from './MatterportMeasure.js';
@@ -112,6 +112,7 @@ export class Launcher {
     sp.core.Navigate(7, Number(this.params.get('sweep') ?? 0), mode, 0);
     if (this.params.has('yaw')) nav.look(Number(this.params.get('yaw')), Number(this.params.get('pitch') ?? 0));
     nav.setDebugView(Number(this.params.get('view') ?? 0));
+    if (this.params.get('empty')) nav.setEmptyRooms(true);
     const measure = this.measure = new MatterportMeasure(sp, nav);
     this.hud = new Hud(sp, nav, measure, () => this.showMenu());
     nav.onKey = (e) => measure.onKey(e) || this.hud.onKey(e);

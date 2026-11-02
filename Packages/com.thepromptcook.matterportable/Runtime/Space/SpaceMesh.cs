@@ -117,6 +117,7 @@ namespace Matterportable
             {
                 var r = _props[i];
                 if (r == null) continue;
+                r.enabled = !props.Hidden; // "empty rooms"
                 var pose = props.Poses[i];
                 r.transform.SetPositionAndRotation(Object.transform.TransformPoint(pose.Translation.ToUnity()), Object.transform.rotation * pose.Rotation.ToUnity());
                 var t = props.Tint(i, highlight, debugView);

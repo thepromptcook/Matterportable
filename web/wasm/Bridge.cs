@@ -13,13 +13,15 @@ using Matterportable.Core;
 /// </summary>
 public static partial class Bridge
 {
-    /// <summary>Panorama work for the page: [command (0 load, 1 depth, 2 unload), sweep, tier index] triples.</summary>
+    /// <summary>Panorama work for the page: [command (0 load, 1 depth, 2 unload, 3 load the clean photos), sweep, tier
+    /// index] triples (the clean photos' paths are in space.json).</summary>
     sealed class PageLoader : IPanoramaLoader
     {
         public readonly List<double> Commands = new List<double>();
         public void Load(int sweep, PanoTier tier) => Commands.AddRange(new double[] { 0, sweep, _model.Sweeps[sweep].Entry.Tiers.IndexOf(tier) });
         public void ComputeDepth(int sweep) => Commands.AddRange(new double[] { 1, sweep, 0 });
         public void Unload(int sweep) => Commands.AddRange(new double[] { 2, sweep, 0 });
+        public void LoadClean(int sweep, IReadOnlyList<string> faces, IReadOnlyList<string> painted) => Commands.AddRange(new double[] { 3, sweep, 0 });
     }
 
     static readonly ViewerSettings Settings = new ViewerSettings();
@@ -75,6 +77,16 @@ public static partial class Bridge
                 WorldFromPano = Mat3.FromColumns(V(r, 0), V(r, 3), V(r, 6)),
             };
             foreach (var n in s["neighbors"].Items) sweep.Neighbors.Add(n.AsInt());
+            if (s["clean"].Items.Count == 6)
+            {
+                sweep.CleanFaces = new string[6];
+                sweep.PaintedProps = new string[6];
+                for (int f = 0; f < 6; f++)
+                {
+                    sweep.CleanFaces[f] = s["clean"].Items[f].AsString();
+                    sweep.PaintedProps[f] = s["painted"].Items.Count == 6 ? s["painted"].Items[f].AsString() : null;
+                }
+            }
             sweeps.Add(sweep);
         }
         _model = new SpaceModel(manifest, cal, geo, sweeps);
@@ -93,8 +105,9 @@ public static partial class Bridge
     /// hover, floor, flags (1 moving, 2 changing mode, 4 waiting, 8 tour, 16 cull back, 32 clicked), pano A, B,
     /// depth A, B, pose A, B, blend, projection, use depth, debug view, valid A, B, clip height, floor count, view clip
     /// height, active loads, queued, marker count, markers (position, normal, radius, rgba, inner, fill), command
-    /// count, commands (see <see cref="PageLoader"/>), highlighted prop, prop flags (1 carrying, 2 drop refused), prop
-    /// count, props (translation xyz, rotation xyzw, tint rgba, moved)].
+    /// count, commands (see <see cref="PageLoader"/>), highlighted prop, prop flags (1 carrying, 2 drop refused, 4 empty
+    /// rooms), prop count, props (translation xyz, rotation xyzw, tint rgba, moved), clean A, clean B (the sweeps whose
+    /// clean photos to bind, -1 none)].
     /// </summary>
     [JSExport]
     public static double[] Frame(double[] i)
@@ -124,7 +137,7 @@ public static partial class Bridge
         _loader.Commands.Clear();
         var props = n.Props;
         o.Add(n.HighlightProp);
-        o.Add(props == null ? 0 : (props.Carried >= 0 ? 1 : 0) | (props.DropRefused ? 2 : 0));
+        o.Add(props == null ? 0 : (props.Carried >= 0 ? 1 : 0) | (props.DropRefused ? 2 : 0) | (props.Hidden ? 4 : 0));
         o.Add(props?.Props.Count ?? 0);
         for (int p = 0; props != null && p < props.Props.Count; p++)
         {
@@ -132,6 +145,8 @@ public static partial class Bridge
             var tint = props.Tint(p, n.HighlightProp, v.DebugView);
             o.AddRange(new double[] { pose.Translation.X, pose.Translation.Y, pose.Translation.Z, pose.Rotation.X, pose.Rotation.Y, pose.Rotation.Z, pose.Rotation.W, tint.R, tint.G, tint.B, tint.A, props.Moved(p) ? 1 : 0 });
         }
+        o.Add(v.CleanA);
+        o.Add(v.CleanB);
         return o.ToArray();
     }
 
@@ -139,9 +154,11 @@ public static partial class Bridge
     [JSExport] public static bool PanoLoaded(int sweep, int size) => _panos.Loaded(sweep, size);
     [JSExport] public static void PanoFailed(int sweep) => _panos.Failed(sweep);
     [JSExport] public static void DepthReady(int sweep) => _panos.DepthReady(sweep);
+    /// <summary>A sweep's clean photos arrived; false means it was dropped meanwhile (discard them).</summary>
+    [JSExport] public static bool CleanLoaded(int sweep, int size) => _panos.CleanLoaded(sweep, size);
 
     /// <summary>Navigation commands: 0 go to sweep, 1 set mode, 2 set floor (-1 all), 3 teleport (sweep, yaw, pitch),
-    /// 4 toggle tour, 5 render view, 6 measuring on/off, 7 start sweep and mode, 8 look (yaw, pitch).</summary>
+    /// 4 toggle tour, 5 render view, 6 measuring on/off, 7 start sweep and mode, 8 look (yaw, pitch), 9 empty rooms on/off.</summary>
     [JSExport]
     public static void Navigate(int command, int a, double b, double c)
     {
@@ -156,6 +173,7 @@ public static partial class Bridge
             case 6: _nav.Measuring = a != 0; break;
             case 7: _nav.StartSweep = a; _nav.StartMode = (ViewMode)(int)b; break;
             case 8: _nav.Look((float)b, (float)c); break;
+            case 9: _nav.SetEmptyRooms(a != 0); break;
         }
     }
 
@@ -166,6 +184,9 @@ public static partial class Bridge
 
     /// <summary>Walk mode's hint for the prop under the pointer or in the hands ("" for none).</summary>
     [JSExport] public static string PropHint() => ViewerText.PropHint(_nav) ?? "";
+
+    /// <summary>The "empty rooms" button's label.</summary>
+    [JSExport] public static string EmptyRoomsButton() => ViewerText.EmptyRoomsButton(_nav);
 
     /// <summary>Which piece each triangle is drawn with (geometry.bin's order): 0 the room, i + 1 prop i.</summary>
     [JSExport] public static int[] PropOwners() => _model.PieceOfTriangle;

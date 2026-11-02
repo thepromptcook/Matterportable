@@ -146,6 +146,10 @@ namespace Matterportable.Core
         public int Floor;
         public List<int> Neighbors = new List<int>();
         public SweepEntry Entry;
+        /// <summary>Its six faces with the furniture painted out (paths in the space folder), or null
+        /// (<see cref="CleanPanoramas"/>), and per face the map of which prop each pixel had painted out (null where
+        /// nothing was).</summary>
+        public string[] CleanFaces, PaintedProps;
     }
 
     public static class SweepBuilder

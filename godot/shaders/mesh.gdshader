@@ -30,18 +30,24 @@ void fragment() {
 	vec3 lA = dA * rot_a;
 	vec3 lB = dB * rot_b;
 
-	vec3 cA = mp_sample_pano(pano_a, lA);
-	vec3 cB = mp_sample_pano(pano_b, lB);
+	vec3 lAdx = dFdx(lA), lAdy = dFdy(lA), lBdx = dFdx(lB), lBdy = dFdy(lB);
 
-	float visA = mp_valid.x;
-	float visB = mp_valid.y;
-	bool holeA = false; // a moved prop hid this point from sweep A
+	// The depth test: -1 where a moved (or hidden) prop hid the point from that sweep.
+	float a = 1.0, b = 1.0;
 	if (mp_state.z > 0.5) {
-		float a = mp_depth_visibility(depth_a, dA, prop_id), b = mp_depth_visibility(depth_b, dB, prop_id);
-		holeA = a < 0.0;
-		visA *= max(a, 0.0);
-		visB *= max(b, 0.0);
+		a = mp_depth_visibility(depth_a, dA, prop_id);
+		b = mp_depth_visibility(depth_b, dB, prop_id);
 	}
+	// The room shows the clean photos (furniture painted out) where a moved prop was painted out or hid it, and everywhere
+	// in "empty rooms".
+	bool room = prop_id < 0.5;
+	bool cleanA = room && mp_clean.x > 0.5 && (a < 0.0 || mp_clean.z > 0.5 || mp_painted_moved(painted_a, lA));
+	bool cleanB = room && mp_clean.y > 0.5 && (b < 0.0 || mp_clean.z > 0.5 || mp_painted_moved(painted_b, lB));
+	vec3 cA = cleanA ? mp_sample_pano(clean_a, lA, lAdx, lAdy) : mp_sample_pano(pano_a, lA, lAdx, lAdy);
+	vec3 cB = cleanB ? mp_sample_pano(clean_b, lB, lBdx, lBdy) : mp_sample_pano(pano_b, lB, lBdx, lBdy);
+	float visA = mp_valid.x * (a < 0.0 ? (cleanA ? 1.0 : 0.0) : a);
+	float visB = mp_valid.y * (b < 0.0 ? (cleanB ? 1.0 : 0.0) : b);
+	bool holeA = a < 0.0 && !cleanA; // no clean photo: fill from the photo's surroundings
 
 	float wA, wB;
 	mp_blend_weights(mp_state.x, visA, visB, wA, wB);

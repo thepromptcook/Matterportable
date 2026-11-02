@@ -37,7 +37,7 @@ namespace Matterportable
             (KeyCode.W, NavKeys.Forward), (KeyCode.UpArrow, NavKeys.Forward), (KeyCode.S, NavKeys.Back), (KeyCode.DownArrow, NavKeys.Back),
             (KeyCode.A, NavKeys.Left), (KeyCode.D, NavKeys.Right), (KeyCode.RightBracket, NavKeys.Next), (KeyCode.LeftBracket, NavKeys.Previous),
             (KeyCode.Home, NavKeys.Home), (KeyCode.PageUp, NavKeys.FloorUp), (KeyCode.PageDown, NavKeys.FloorDown), (KeyCode.P, NavKeys.Tour),
-            (KeyCode.F2, NavKeys.DebugView), (KeyCode.F, NavKeys.Use),
+            (KeyCode.F2, NavKeys.DebugView), (KeyCode.F, NavKeys.Use), (KeyCode.U, NavKeys.EmptyRooms),
         };
         static readonly (KeyCode key, NavKeys nav)[] HeldKeys =
         {

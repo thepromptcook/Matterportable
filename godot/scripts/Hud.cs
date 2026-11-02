@@ -4,8 +4,8 @@ using Matterportable.Core;
 
 namespace Matterportable
 {
-    /// <summary>On-screen controls (mirrors the Unity MatterportHud): view modes, floors, measure, tour, menu, key hint,
-    /// Walk mode's hint for the prop under the pointer, F1 stats (text from Core <see cref="ViewerText"/>).</summary>
+    /// <summary>On-screen controls (mirrors the Unity MatterportHud): view modes, floors, measure, tour, empty rooms, menu,
+    /// key hint, Walk mode's hint for the prop under the pointer, F1 stats (text from Core <see cref="ViewerText"/>).</summary>
     public partial class Hud : CanvasLayer
     {
         public MatterportSpace Space;
@@ -16,7 +16,7 @@ namespace Matterportable
         Label _status, _stats, _propHint;
         HBoxContainer _floors;
         Button[] _modes;
-        Button _tour, _measure;
+        Button _tour, _measure, _empty;
         int _floorCount = -1;
         Navigator Nav => Navigator.Core;
 
@@ -41,6 +41,7 @@ namespace Matterportable
             bar.AddChild(_measure = MakeButton("📏 Measure", () => Measure.SetActive(!Measure.Active)));
             _measure.ToggleMode = true;
             bar.AddChild(_tour = MakeButton("▶ Tour", () => { if (Nav != null) Nav.AutoTour = !Nav.AutoTour; }));
+            bar.AddChild(_empty = MakeButton("", () => Nav?.SetEmptyRooms(!Nav.EmptyRooms)));
             bar.AddChild(_floors = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore });
             root.AddChild(_status = new Label { AnchorLeft = 0.5f, AnchorRight = 0.5f, AnchorTop = 0.5f, AnchorBottom = 0.5f, GrowHorizontal = Control.GrowDirection.Both, HorizontalAlignment = HorizontalAlignment.Center, MouseFilter = Control.MouseFilterEnum.Ignore });
             root.AddChild(_stats = new Label { Position = new Vector2(12, 44), Visible = false, MouseFilter = Control.MouseFilterEnum.Ignore });
@@ -71,6 +72,8 @@ namespace Matterportable
             _tour.Text = Nav.AutoTour ? "■ Tour" : "▶ Tour";
             _measure.SetPressedNoSignal(Measure.Active);
             _measure.Visible = _modes[3].Visible = Space.Model.Geometry != null; // both need the mesh
+            _empty.Visible = Nav.Props != null && Space.Model.HasCleanPanoramas; // the furniture painted out (tools/reconstruct)
+            _empty.Text = ViewerText.EmptyRoomsButton(Nav);
             if (_floorCount != Space.Model.FloorCount) BuildFloorButtons();
             _floors.Visible = Nav.Mode != ViewMode.Inside && Space.Model.FloorCount > 1;
             _propHint.Text = ViewerText.PropHint(Nav) ?? "";

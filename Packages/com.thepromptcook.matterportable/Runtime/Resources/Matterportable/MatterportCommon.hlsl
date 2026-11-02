@@ -9,6 +9,12 @@ Texture2DArray _MP_PanoA;  SamplerState sampler_MP_PanoA;
 Texture2DArray _MP_PanoB;  SamplerState sampler_MP_PanoB;
 Texture2DArray _MP_DepthA; SamplerState sampler_MP_DepthA;
 Texture2DArray _MP_DepthB; SamplerState sampler_MP_DepthB;
+// The same sweeps' clean photos (furniture painted out), for the room behind moved props and "empty rooms", and which
+// prop each clean pixel had painted out (R8, point-sampled: prop + 1).
+Texture2DArray _MP_CleanA; SamplerState sampler_MP_CleanA;
+Texture2DArray _MP_CleanB; SamplerState sampler_MP_CleanB;
+Texture2DArray _MP_PaintedA; SamplerState sampler_MP_PaintedA;
+Texture2DArray _MP_PaintedB; SamplerState sampler_MP_PaintedB;
 
 float4 _MP_PosA;        // xyz: world position of sweep A
 float4 _MP_PosB;        // xyz: world position of sweep B
@@ -22,6 +28,7 @@ float4 _MP_State;        // x: blend A->B, y: projection amount (1 inside, 0 dol
 float4 _MP_Valid;        // x: pano A loaded, y: pano B loaded, z: clip height (world y)
 float4 _MP_Background;   // background colour outside the panoramas
 float4 _MP_Moved[64];    // 1 for each prop that has moved (prop i: element i / 4, component i % 4)
+float4 _MP_Clean;        // x: clean A bound, y: clean B bound, z: empty rooms (the room shows them everywhere)
 
 // Major axis of a direction; face index matches SignedAxis (0 +X, 1 -X, 2 +Y, 3 -Y, 4 +Z, 5 -Z).
 float3 MP_FaceAxis(float3 l, out int face)
@@ -111,6 +118,17 @@ float MP_Moved(float piece)
 bool MP_Hides(float2 texel, float piece)
 {
     return abs(texel.y - piece) > 0.5 && MP_Moved(texel.y) > 0.5;
+}
+
+// Whether the clean photos painted out a moved prop at this panorama-local direction (0 where nothing was painted). The
+// photos show a prop wider than the scan does (thin legs and backs), so this, not the depth test, says where the clean
+// photo replaces the photo.
+bool MP_PaintedMoved(Texture2DArray painted, SamplerState s, float3 l)
+{
+    float3 coord;
+    float2 gx, gy;
+    MP_PanoCoords(l, float3(0, 0, 0), float3(0, 0, 0), coord, gx, gy);
+    return MP_Moved(floor(painted.SampleLevel(s, coord, 0).r * 255 + 0.5)) > 0.5;
 }
 
 // Percentage-closer filtering: the visibility test on the four nearest depth texels (point-sampled), blended

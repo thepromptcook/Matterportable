@@ -143,9 +143,9 @@ Commands:
                     File.WriteAllBytes(Path.Combine(outDir, file), Png.Encode(img));
                     var props = JsonValue.NewObject();
                     foreach (var kv in counts) props.Set(kv.Key.ToString(CultureInfo.InvariantCulture), kv.Value);
-                    var tier = model.Sweeps[s].Entry.Tiers.OrderBy(t => t.Size).Last();
+                    var tier = model.Sweeps[s].Entry.Tiers.Where(t => t.Tiles <= 1).OrderBy(t => t.Size).LastOrDefault(); // as CleanPanoramas
                     faces.Add(JsonValue.NewObject().Set("sweep", s).Set("face", f).Set("mask", file)
-                        .Set("photo", tier.Tiles > 1 ? null : tier.FacePath(f)).Set("props", props));
+                        .Set("photo", tier?.FacePath(f)).Set("props", props));
                 }
             var json = JsonValue.NewObject().Set("size", size).Set("props", model.Props.Count).Set("faces", faces);
             File.WriteAllText(Path.Combine(outDir, "masks.json"), json.ToJson(true));

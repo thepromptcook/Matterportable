@@ -85,6 +85,8 @@ namespace Matterportable
             if (mesh && Button("Walk", nav.Mode == ViewMode.Walk)) nav.SetMode(ViewMode.Walk);
             if (_measure != null && mesh && Button("Measure", _measure.Active, 12)) _measure.SetActive(!_measure.Active);
             if (Button(nav.AutoTour ? "■ Tour" : "▶ Tour", nav.AutoTour, 12)) nav.AutoTour = !nav.AutoTour;
+            if (nav.Props != null && space.Model.HasCleanPanoramas && Button(ViewerText.EmptyRoomsButton(nav), nav.EmptyRooms, 12))
+                nav.SetEmptyRooms(!nav.EmptyRooms); // the furniture painted out (tools/reconstruct)
             if (nav.Mode == ViewMode.Inside || space.Model.FloorCount < 2) return;
             if (Button("All", nav.SelectedFloor < 0, 16)) nav.SetFloor(-1);
             for (int f = 0; f < space.Model.FloorCount; f++)

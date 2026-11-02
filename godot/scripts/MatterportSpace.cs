@@ -282,6 +282,9 @@ namespace Matterportable
             {
                 ("pano_a", Panoramas.Faces(v.PanoA) ?? _empty), ("pano_b", Panoramas.Faces(v.PanoB) ?? _empty),
                 ("depth_a", Panoramas.Depth(v.DepthA) ?? _empty), ("depth_b", Panoramas.Depth(v.DepthB) ?? _empty),
+                ("clean_a", Panoramas.Clean(v.CleanA) ?? _empty), ("clean_b", Panoramas.Clean(v.CleanB) ?? _empty),
+                ("painted_a", Panoramas.Painted(v.CleanA) ?? _empty), ("painted_b", Panoramas.Painted(v.CleanB) ?? _empty),
+                ("mp_clean", new Vector4(Panoramas.Clean(v.CleanA) != null ? 1f : 0f, Panoramas.Clean(v.CleanB) != null ? 1f : 0f, v.EmptyRooms ? 1f : 0f, 0f)),
                 ("pos_a", Model.Sweeps[v.PoseA].Position.ToGodot()), ("pos_b", Model.Sweeps[v.PoseB].Position.ToGodot()),
                 ("rot_a", GodotUtil.ShaderRotation(Model.Sweeps[v.PoseA].WorldFromPano)), ("rot_b", GodotUtil.ShaderRotation(Model.Sweeps[v.PoseB].WorldFromPano)),
                 ("mp_state", new Vector4(v.Blend, v.Projection, v.UseDepth ? 1f : 0f, v.DebugView)),
@@ -311,6 +314,7 @@ namespace Matterportable
             for (int i = 0; i < _propMeshes.Count; i++)
             {
                 if (_propMeshes[i] == null) continue;
+                _propMeshes[i].Visible = !Props.Hidden; // "empty rooms"
                 var pose = Props.Poses[i];
                 _propMeshes[i].Transform = new Transform3D(new Basis(pose.Rotation.ToGodot()), pose.Translation.ToGodot());
                 var t = Props.Tint(i, HighlightProp, v.DebugView);

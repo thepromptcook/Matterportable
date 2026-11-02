@@ -10,13 +10,15 @@ namespace Matterportable
 {
     /// <summary>
     /// Loads what the Core <see cref="PanoramaScheduler"/> asks for (mirrors the Unity PanoramaCache): six faces per
-    /// sweep into a mipmapped Texture2DArray (decode and mipmaps on worker threads, upload on the main thread) and the
-    /// occlusion depth cube (<see cref="CubeFaces.DepthCube"/> on a worker, uploaded one per frame).
+    /// sweep into a mipmapped Texture2DArray (decode and mipmaps on worker threads, upload on the main thread), the
+    /// occlusion depth cube (<see cref="CubeFaces.DepthCube"/> on a worker, uploaded one per frame) and the clean photos
+    /// (furniture painted out) the same way as the photos, with the map of which prop each pixel had painted out.
     /// </summary>
     public sealed class PanoramaCache : IPanoramaLoader
     {
         readonly MatterportSpace _space;
-        readonly Dictionary<int, Texture2DArray> _faces = new Dictionary<int, Texture2DArray>(), _depth = new Dictionary<int, Texture2DArray>();
+        readonly Dictionary<int, Texture2DArray> _faces = new Dictionary<int, Texture2DArray>(), _depth = new Dictionary<int, Texture2DArray>(),
+            _clean = new Dictionary<int, Texture2DArray>(), _painted = new Dictionary<int, Texture2DArray>();
         readonly ConcurrentQueue<(int sweep, ushort[] depth, int size)> _depthResults = new ConcurrentQueue<(int, ushort[], int)>();
         bool _disposed;
 
@@ -26,6 +28,9 @@ namespace Matterportable
 
         public Texture2DArray Faces(int sweep) => sweep >= 0 && _faces.TryGetValue(sweep, out var t) ? t : null;
         public Texture2DArray Depth(int sweep) => sweep >= 0 && _depth.TryGetValue(sweep, out var t) ? t : null;
+        public Texture2DArray Clean(int sweep) => sweep >= 0 && _clean.TryGetValue(sweep, out var t) ? t : null;
+        /// <summary>Which prop each clean pixel had painted out (prop + 1).</summary>
+        public Texture2DArray Painted(int sweep) => sweep >= 0 && _painted.TryGetValue(sweep, out var t) ? t : null;
 
         public async void Load(int sweep, PanoTier tier)
         {
@@ -34,15 +39,58 @@ namespace Matterportable
                 var dir = _space.SpaceDir;
                 var faces = await Task.Run(() => DecodeFaces(dir, tier));
                 if (_disposed || !Scheduler.Loaded(sweep, faces[0].GetWidth())) return;
-                var tex = new Texture2DArray();
-                tex.CreateFromImages(new Godot.Collections.Array<Image>(faces));
-                _faces[sweep] = tex;
+                _faces[sweep] = ArrayOf(faces);
             }
             catch (Exception e)
             {
                 GD.PushWarning($"[Matterportable] Could not load panorama {tier.Directory}: {GodotUtil.Unwrap(e)}");
                 Scheduler.Failed(sweep);
             }
+        }
+
+        public async void LoadClean(int sweep, IReadOnlyList<string> paths, IReadOnlyList<string> painted)
+        {
+            try
+            {
+                var dir = _space.SpaceDir;
+                var (faces, props) = await Task.Run(() => (Decode(dir, paths, Image.Format.Rgb8, true), Decode(dir, painted, Image.Format.L8, false)));
+                if (_disposed || !Scheduler.CleanLoaded(sweep, faces[0].GetWidth())) return;
+                _clean[sweep] = ArrayOf(faces);
+                _painted[sweep] = ArrayOf(props);
+            }
+            catch (Exception e)
+            {
+                GD.PushWarning($"[Matterportable] Could not load the clean photos of sweep {sweep}: {GodotUtil.Unwrap(e)}");
+            }
+        }
+
+        /// <summary>Worker thread: six images in one format and size (a texture array's layers share them); missing ones
+        /// (null paths) are zero.</summary>
+        static Image[] Decode(string dir, IReadOnlyList<string> paths, Image.Format format, bool mipmaps)
+        {
+            var images = new Image[6];
+            int size = 0;
+            for (int i = 0; i < 6; i++)
+            {
+                if (paths[i] == null) continue;
+                var img = images[i] = GodotUtil.LoadImage(CacheLayout.Resolve(dir, paths[i]));
+                img.Convert(format);
+                if (size == 0) size = img.GetWidth();
+                if (img.GetWidth() != size || img.GetHeight() != size) img.Resize(size, size, mipmaps ? Image.Interpolation.Bilinear : Image.Interpolation.Nearest);
+            }
+            for (int i = 0; i < 6; i++)
+            {
+                images[i] ??= Image.CreateEmpty(Math.Max(size, 1), Math.Max(size, 1), false, format);
+                if (mipmaps) images[i].GenerateMipmaps();
+            }
+            return images;
+        }
+
+        static Texture2DArray ArrayOf(Image[] faces)
+        {
+            var tex = new Texture2DArray();
+            tex.CreateFromImages(new Godot.Collections.Array<Image>(faces));
+            return tex;
         }
 
         public void ComputeDepth(int sweep)
@@ -58,6 +106,8 @@ namespace Matterportable
         {
             _faces.Remove(sweep);
             _depth.Remove(sweep);
+            _clean.Remove(sweep);
+            _painted.Remove(sweep);
         }
 
         /// <summary>Uploads one finished depth cube per frame.</summary>
@@ -108,6 +158,8 @@ namespace Matterportable
             _disposed = true;
             _faces.Clear();
             _depth.Clear();
+            _clean.Clear();
+            _painted.Clear();
         }
     }
 }

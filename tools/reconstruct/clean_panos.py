@@ -4,14 +4,17 @@
     dotnet run --project tools/Matterportable.Cli -- masks MatterportCache/<id> --size 160
     python3 tools/reconstruct/clean_panos.py MatterportCache/<id> [--sam-faces 85] [--sam-min 0.03]
 
-1. Which prop each panorama pixel shows comes from the scan (the CLI's `masks`: ray casts from every sweep).
+1. Which prop each panorama pixel shows comes from the scan (the CLI's `masks`: ray casts from every sweep; the room's
+   surfaces inside a prop's box count as the prop, for the thin parts the scan misses).
 2. Segment Anything (MobileSAM, ONNX) sharpens the outline of every piece big enough to matter, from a box around
    its scan mask. The encoder costs ~0.5 s per face on 4 cores whatever the size, so it runs on the faces with the
-   biggest pieces only (--sam-faces); elsewhere the scan's mask, grown to cover calibration slack, is used.
+   biggest pieces only (--sam-faces); everywhere the scan's mask, grown to cover calibration slack, is painted too.
 3. LaMa (ONNX, fixed 512 px input, ~3.5 s) paints the pieces out, on a square crop around them.
 
-Writes <space>/recon/clean/<sweep>/face<N>.jpg (only the faces that changed) and clean.json. Pre-trained models
-are downloaded once into <cache>/_models (pip install onnxruntime numpy pillow). Not committed: MatterportCache/.
+Writes <space>/recon/clean/<sweep>/face<N>.jpg (only the faces that changed), painted<N>.png (512 px, 8-bit: which
+prop each pixel had painted out, prop + 1; the viewers show the clean photo there once that prop moved) and clean.json
+(--sweeps redoes some sweeps and keeps the rest). Pre-trained models are downloaded once into <cache>/_models
+(pip install onnxruntime numpy pillow). Not committed: MatterportCache/.
 """
 import argparse, json, os, sys, time, urllib.request, zipfile
 import numpy as np
@@ -103,12 +106,14 @@ def main():
     ap.add_argument('--sam-min', type=float, default=0.03, help='a piece must cover this share of a face for it')
     ap.add_argument('--min-hole', type=float, default=0.003, help='faces whose pieces cover less are left alone')
     ap.add_argument('--limit', type=int, default=0, help='only the first N faces (testing)')
+    ap.add_argument('--sweeps', default='', help='only these sweeps, e.g. 3,35 (the others in clean.json are kept)')
     args = ap.parse_args()
     space = os.path.abspath(args.space)
     masks_dir = os.path.join(space, 'recon', 'masks')
     info = json.load(open(os.path.join(masks_dir, 'masks.json')))
     n = info['size'] ** 2
-    faces = [f for f in info['faces'] if f['photo'] and sum(f['props'].values()) / n >= args.min_hole]
+    only = {int(v) for v in args.sweeps.split(',') if v.strip()}
+    faces = [f for f in info['faces'] if f['photo'] and sum(f['props'].values()) / n >= args.min_hole and (not only or f['sweep'] in only)]
     if args.limit:
         faces = faces[:args.limit]
     # The faces with the biggest pieces get Segment Anything.
@@ -126,38 +131,47 @@ def main():
         ids = Image.fromarray((ids[..., 0] + 256 * ids[..., 1]).astype(np.int32)).resize((w, h), Image.NEAREST)
         ids = np.asarray(ids)
         slack = max(4, w // 64)  # the scan's outline is a few cm off the photo's
-        hole = np.zeros((h, w), bool)
-        boxes, scan_masks = [], []
+        regions = []  # (prop, scan mask, box around it)
         for prop in f['props']:
             m = ids == int(prop) + 1
             if not m.any():
                 continue
-            scan_masks.append(m)
             ys, xs = np.nonzero(m)
             pad = slack * 2
-            boxes.append((max(0, xs.min() - pad), max(0, ys.min() - pad), min(w, xs.max() + pad), min(h, ys.max() + pad)))
-        if (f['sweep'], f['face']) in sam_faces and boxes:
+            regions.append((int(prop), m, (max(0, xs.min() - pad), max(0, ys.min() - pad), min(w, xs.max() + pad), min(h, ys.max() + pad))))
+        outlines = [None] * len(regions)
+        if (f['sweep'], f['face']) in sam_faces and regions:
             t = time.time()
-            for (sm, iou), m in zip(sam.outline(face, boxes), scan_masks):
-                # Trust the sharp outline when it agrees with the scan; otherwise the grown scan mask.
-                overlap = (sm & m).sum() / max(1, m.sum())
-                hole |= grow(sm | m, slack // 2) if iou > 0.7 and overlap > 0.5 else grow(m, slack)
+            outlines = sam.outline(face, [r[2] for r in regions])
             t_sam += time.time() - t
-        else:
-            for m in scan_masks:
-                hole |= grow(m, slack)
+        hole = np.zeros((h, w), bool)
+        painted = np.zeros((h, w), np.uint8)
+        for (prop, m, _), outline in zip(regions, outlines):
+            region = grow(m, slack)
+            if outline is not None:
+                sm, iou = outline  # the sharp outline too, when it is sure and mostly where the scan says
+                if iou > 0.7 and (sm & region).sum() > 0.5 * max(1, sm.sum()):
+                    region |= grow(sm, slack // 2)
+            hole |= region
+            if prop < 255:  # 8 bits
+                painted[region & (painted == 0)] = prop + 1
         t = time.time()
         clean = lama.paint(face, hole)
         t_lama += time.time() - t
         folder = os.path.join(out_root, '%03d' % f['sweep'])
         os.makedirs(folder, exist_ok=True)
-        name = 'face%d.jpg' % f['face']
+        name, painted_name = 'face%d.jpg' % f['face'], 'painted%d.png' % f['face']
         clean.save(os.path.join(folder, name), quality=92)
-        written.append({'sweep': f['sweep'], 'face': f['face'], 'file': '%03d/%s' % (f['sweep'], name), 'sam': (f['sweep'], f['face']) in sam_faces})
+        Image.fromarray(painted).resize((512, 512), Image.NEAREST).save(os.path.join(folder, painted_name), optimize=True)
+        written.append({'sweep': f['sweep'], 'face': f['face'], 'file': '%03d/%s' % (f['sweep'], name),
+                        'painted': '%03d/%s' % (f['sweep'], painted_name), 'sam': (f['sweep'], f['face']) in sam_faces})
         if (i + 1) % 10 == 0 or i + 1 == len(faces):
             print(f'{i + 1}/{len(faces)} faces, outlines {t_sam:.0f}s, painting {t_lama:.0f}s, total {time.time() - started:.0f}s', flush=True)
-    json.dump({'faces': written}, open(os.path.join(out_root, 'clean.json'), 'w'), indent=1)
-    print(f'{len(written)} clean faces ({len(sam_faces)} outlined by Segment Anything) in {out_root}')
+    index = os.path.join(out_root, 'clean.json')
+    if only and os.path.exists(index):  # keep the other sweeps' faces
+        written += [f for f in json.load(open(index))['faces'] if f['sweep'] not in only]
+    json.dump({'faces': sorted(written, key=lambda f: (f['sweep'], f['face']))}, open(index, 'w'), indent=1)
+    print(f'{len(faces)} faces painted ({len(sam_faces & {(f["sweep"], f["face"]) for f in faces})} outlined by Segment Anything), {len(written)} in {index}')
 
 
 if __name__ == '__main__':

@@ -12,7 +12,11 @@ namespace Matterportable.Core
         void Load(int sweep, PanoTier tier);
         /// <summary>Build the sweep's occlusion depth cube.</summary>
         void ComputeDepth(int sweep);
-        /// <summary>Free the sweep's photos and depth cube.</summary>
+        /// <summary>Load the sweep's clean faces (the furniture painted out): six image paths in the space folder, and
+        /// per face which prop each pixel had painted out (8-bit images, prop + 1; null: none, all 0). Report back with
+        /// <see cref="PanoramaScheduler.CleanLoaded"/>.</summary>
+        void LoadClean(int sweep, IReadOnlyList<string> faces, IReadOnlyList<string> painted);
+        /// <summary>Free the sweep's photos, clean photos and depth cube.</summary>
         void Unload(int sweep);
     }
 
@@ -25,8 +29,8 @@ namespace Matterportable.Core
     {
         sealed class Entry
         {
-            public int Size, LoadingSize;
-            public bool Depth, DepthRequested;
+            public int Size, LoadingSize, CleanSize;
+            public bool Depth, DepthRequested, Clean, CleanRequested;
             public double LastUsed, LoadStarted, LoadSeconds;
         }
 
@@ -71,6 +75,7 @@ namespace Matterportable.Core
         public bool IsReady(int sweep) => Get(sweep)?.Size > 0;
         public int Size(int sweep) => Get(sweep)?.Size ?? 0;
         public bool HasDepth(int sweep) => Get(sweep)?.Depth ?? false;
+        public bool HasClean(int sweep) => Get(sweep)?.Clean ?? false;
         public double LoadSeconds(int sweep) => Get(sweep)?.LoadSeconds ?? 0;
 
         public int LoadedCount
@@ -89,7 +94,8 @@ namespace Matterportable.Core
             get { long b = 0; foreach (var e in _entries.Values) b += Bytes(e); return b; }
         }
 
-        long Bytes(Entry e) => (long)e.Size * e.Size * 4 * 6 * 4 / 3 + (e.Depth ? (long)_settings.DepthMapSize * _settings.DepthMapSize * 4 * 6 : 0); // depth: two half floats
+        long Bytes(Entry e) => ((long)e.Size * e.Size + (long)e.CleanSize * e.CleanSize) * 4 * 6 * 4 / 3 +
+                               (e.Depth ? (long)_settings.DepthMapSize * _settings.DepthMapSize * 4 * 6 : 0); // depth: two half floats
 
         /// <summary>Ask for a sweep at up to maxSize pixels per face. Lower priority loads first.</summary>
         public void Request(int sweep, int maxSize, float priority)
@@ -130,6 +136,27 @@ namespace Matterportable.Core
             _loader.ComputeDepth(sweep);
         }
 
+        /// <summary>The sweep's clean photos (the furniture painted out), if it has them; once.</summary>
+        public void RequestClean(int sweep)
+        {
+            if (sweep < 0 || sweep >= _sweeps.Count || _sweeps[sweep].CleanFaces == null) return;
+            var e = GetOrCreate(sweep);
+            e.LastUsed = _now;
+            if (e.CleanRequested) return;
+            e.CleanRequested = true;
+            _loader.LoadClean(sweep, _sweeps[sweep].CleanFaces, _sweeps[sweep].PaintedProps);
+        }
+
+        /// <summary>The clean photos arrived. False if the sweep was dropped meanwhile (discard them).</summary>
+        public bool CleanLoaded(int sweep, int size)
+        {
+            var e = Get(sweep);
+            if (e == null || !e.CleanRequested) return false;
+            e.Clean = true;
+            e.CleanSize = size;
+            return true;
+        }
+
         /// <summary>Once per frame: starts queued loads (best priority first, one per sweep at a time) and drops the
         /// least recently used panoramas while over budget.</summary>
         public void Update(float deltaTime)
@@ -162,11 +189,11 @@ namespace Matterportable.Core
             {
                 if (used <= budget) break;
                 var e = kv.Value;
-                if (IsPinned(kv.Key) || e.LoadingSize > 0 || (e.Size == 0 && !e.Depth)) continue;
+                if (IsPinned(kv.Key) || e.LoadingSize > 0 || (e.Size == 0 && !e.Depth && !e.Clean)) continue;
                 used -= Bytes(e);
                 _loader.Unload(kv.Key);
-                e.Size = 0;
-                e.Depth = e.DepthRequested = false;
+                e.Size = e.CleanSize = 0;
+                e.Depth = e.DepthRequested = e.Clean = e.CleanRequested = false;
             }
         }
 

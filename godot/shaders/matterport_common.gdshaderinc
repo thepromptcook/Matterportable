@@ -5,6 +5,12 @@
 
 uniform sampler2DArray pano_a : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
 uniform sampler2DArray pano_b : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
+// The same sweeps' clean photos (furniture painted out), for the room behind moved props and "empty rooms", and which
+// prop each clean pixel had painted out.
+uniform sampler2DArray clean_a : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
+uniform sampler2DArray clean_b : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
+uniform sampler2DArray painted_a : filter_nearest, repeat_disable;
+uniform sampler2DArray painted_b : filter_nearest, repeat_disable;
 uniform sampler2DArray depth_a : filter_nearest, repeat_disable;
 uniform sampler2DArray depth_b : filter_nearest, repeat_disable;
 uniform vec3 pos_a;            // Godot world position of sweep A
@@ -15,6 +21,7 @@ uniform vec4 face_right[6];    // per canonical face: right axis (xyz), source s
 uniform vec4 face_up[6];       // per canonical face: up axis (xyz)
 uniform vec4 mp_state;         // x: blend A->B, y: projection amount, z: use depth, w: debug view
 uniform vec4 mp_valid;         // x: pano A loaded, y: pano B loaded, z: clip height (world y)
+uniform vec4 mp_clean;         // x: clean A bound, y: clean B bound, z: empty rooms (the room shows them everywhere)
 uniform vec3 mp_background : source_color = vec3(0.11, 0.11, 0.12);
 uniform vec4 moved_props[64];  // 1 for each prop that has moved (prop i: element i / 4, component i % 4)
 
@@ -53,10 +60,11 @@ void mp_pano_coords(vec3 l, vec3 ldx, vec3 ldy, out vec3 coord, out vec2 gx, out
 // A panorama sample, filtered with the analytic gradients (anisotropic) - except in a thin band along the face edges,
 // where gradient sampling draws a dashed line along the seam (pixel quads there straddle two faces); an explicit level
 // of detail from the same gradients does not. Measured: even isotropic gradients bring the line back.
-vec3 mp_sample_pano(sampler2DArray pano, vec3 l) {
+// ldx, ldy: the direction's screen derivatives, taken outside any branch.
+vec3 mp_sample_pano(sampler2DArray pano, vec3 l, vec3 ldx, vec3 ldy) {
 	vec3 coord;
 	vec2 gx, gy;
-	mp_pano_coords(l, dFdx(l), dFdy(l), coord, gx, gy);
+	mp_pano_coords(l, ldx, ldy, coord, gx, gy);
 	float size = float(textureSize(pano, 0).x), footprint = max(length(gx), length(gy)) * size;
 	float edge = min(min(coord.x, 1.0 - coord.x), min(coord.y, 1.0 - coord.y)) * size;
 	if (edge > 2.0 * footprint + 1.0) return textureGrad(pano, coord, gx, gy).rgb;
@@ -99,6 +107,16 @@ float mp_moved(float piece) {
 // surfaces the prop stood in front of were never photographed.
 bool mp_hides(vec2 texel, float piece) {
 	return abs(texel.y - piece) > 0.5 && mp_moved(texel.y) > 0.5;
+}
+
+// Whether the clean photos painted out a moved prop at this panorama-local direction (painted: prop + 1 per pixel, 0
+// where nothing was painted). The photos show a prop wider than the scan does (thin legs and backs), so this, not the
+// depth test, says where the clean photo replaces the photo.
+bool mp_painted_moved(sampler2DArray painted, vec3 l) {
+	vec3 coord;
+	vec2 gx, gy;
+	mp_pano_coords(l, vec3(0.0), vec3(0.0), coord, gx, gy);
+	return mp_moved(floor(textureLod(painted, coord, 0.0).r * 255.0 + 0.5)) > 0.5;
 }
 
 // Percentage-closer filtering: the visibility test on the four nearest depth texels, blended bilinearly (bilinear

@@ -11,13 +11,13 @@ namespace Matterportable.Web
     /// What the browser needs for a space, computed natively once and stored in MatterportCache/&lt;id&gt;/web/ (Unity and
     /// Godot ignore it): space.json (sweeps, face layout, parts, textures), geometry.bin (Core-frame positions, UVs,
     /// indices), bvh.bin and features.bin (the BVH and snapping features, which take seconds to build in WebAssembly).
-    /// Rebuilt when the mesh or calibration changes.
+    /// Rebuilt when the mesh, calibration, props or clean photos (recon/clean, furniture painted out) change.
     /// </summary>
     public static class WebBundle
     {
         public const string Folder = "web";
         public static readonly string[] Files = { "space.json", "geometry.bin", "bvh.bin", "features.bin" };
-        const int Version = 2;
+        const int Version = 3;
 
         public static void Prepare(string dir, ILogSink log)
         {
@@ -25,8 +25,10 @@ namespace Matterportable.Web
             var cal = SpaceCalibration.LoadOrDefault(dir);
             var meshPath = manifest.Mesh != null ? CacheLayout.Resolve(dir, manifest.Mesh.File) : null;
             var objects = Path.Combine(dir, PropFinder.FileName);
+            var clean = Path.Combine(dir, CleanPanoramas.Folder, "clean.json");
+            long Ticks(string path) => File.Exists(path) ? File.GetLastWriteTimeUtc(path).Ticks : 0;
             string Key() => $"v{Version}|{(meshPath != null ? File.GetLastWriteTimeUtc(meshPath).Ticks : 0)}|{manifest.Sweeps.Count}|{cal.ToJson().ToJson(false)}|" +
-                            (File.Exists(objects) ? File.GetLastWriteTimeUtc(objects).Ticks : 0);
+                            $"{Ticks(objects)}|{Ticks(clean)}";
             var web = Path.Combine(dir, Folder);
             var keyFile = Path.Combine(web, "key.txt");
             if (File.Exists(keyFile) && File.ReadAllText(keyFile) == Key()) return;
@@ -38,6 +40,7 @@ namespace Matterportable.Web
             if (cal.NeedsSolve && mesh != null) cal = SpaceCalibrator.CheckGeometry(manifest, mesh, new SpaceCalibration(), log);
             var geo = mesh != null ? SpaceGeometry.Build(mesh, cal) : null;
             var sweeps = SweepBuilder.Build(manifest, cal, geo, log);
+            CleanPanoramas.Apply(dir, sweeps);
             // The props (objects.json, shared with Unity and Godot) - found but not saved while the calibration is a guess.
             var floors = new SpaceModel(manifest, cal, geo, sweeps).FloorHeights;
             var props = geo == null ? new List<Prop>() : cal.NeedsSolve ? PropFinder.Find(geo, floors) : PropFinder.LoadOrFind(dir, geo, floors, log);
@@ -106,6 +109,8 @@ namespace Matterportable.Web
                         neighbors = s.Neighbors,
                         rotation = V(r.Column(0)).Concat(V(r.Column(1))).Concat(V(r.Column(2))),
                         tiers = s.Entry.Tiers.Select(t => new { size = t.Size, tiles = Math.Max(1, t.Tiles), dir = t.Directory, ext = t.Extension }),
+                        clean = s.CleanFaces, // furniture painted out (null without), and which prop each pixel had painted out
+                        painted = s.PaintedProps,
                     };
                 }),
                 warnings = manifest.Warnings,

@@ -546,32 +546,6 @@ namespace Matterportable.Core
         }
     }
 
-    /// <summary>The props as they appear in the photos: for the reconstruction step that paints them out.</summary>
-    public static class PropMasks
-    {
-        /// <summary>
-        /// Which piece each pixel of one panorama face image shows (0 the room or nothing, i + 1 prop i), rows bottom-up
-        /// like the Core's images, by ray-casting the scan from the sweep through the face's pixel centres.
-        /// </summary>
-        public static int[] PieceMask(SpaceModel model, int sweep, int slice, int size)
-        {
-            var cal = model.Calibration;
-            var layout = CubeFaces.TryBuildLookup(cal.Faces, out _, out _, out _) ? cal.Faces : CubeFaces.DefaultMatterportLayout();
-            var s = model.Sweeps[sweep];
-            var pieces = model.PieceOfTriangle;
-            var mask = new int[size * size];
-            System.Threading.Tasks.Parallel.For(0, size, y =>
-            {
-                for (int x = 0; x < size; x++)
-                {
-                    var dir = (s.WorldFromPano * layout[slice].Direction((x + 0.5f) / size, (y + 0.5f) / size)).Normalized;
-                    if (model.Geometry.Bvh.Raycast(s.Position, dir, 100f, out var hit)) mask[y * size + x] = pieces[hit.Triangle];
-                }
-            });
-            return mask;
-        }
-    }
-
     /// <summary>
     /// Walk mode's world: the scan with its props where they are now, and what the hands do with them (carry, put
     /// down, turn, swing doors). The room is the space's BVH with the props' triangles skipped; each prop is its own
@@ -592,6 +566,9 @@ namespace Matterportable.Core
         public int Carried { get; private set; } = -1;
         /// <summary>True once anything has moved from where it was scanned.</summary>
         public bool AnyMoved { get; private set; }
+        /// <summary>"Empty rooms": the props are gone (not drawn, not in the way, not reachable) and the room is drawn
+        /// from its clean photos.</summary>
+        public bool Hidden { get; set; }
         /// <summary>The last try to put the carried prop down was refused (it would have landed on the body).</summary>
         public bool DropRefused { get; private set; }
 
@@ -657,6 +634,7 @@ namespace Matterportable.Core
         /// render view gives every prop its own colour. Transparent for the rest.</summary>
         public Rgba Tint(int prop, int highlight, int debugView)
         {
+            if (Hidden) return new Rgba(0f, 0f, 0f, 0f);
             if (debugView == ViewerText.PropsView)
             {
                 if (Props[prop].Kind == PropKind.Door) return new Rgba(1f, 0.85f, 0.1f, 0.6f);
@@ -670,7 +648,7 @@ namespace Matterportable.Core
         }
 
         /// <summary>The prop is no longer where it was scanned (shaders then refuse its photo pixels for anything else).</summary>
-        public bool Moved(int prop) => !Poses[prop].IsIdentity;
+        public bool Moved(int prop) => Hidden || !Poses[prop].IsIdentity;
 
         /// <summary>The door has been swung (or is swinging) away from where it was scanned.</summary>
         public bool DoorSwung(int prop) => _state[prop].DoorTarget != 0;
@@ -744,7 +722,7 @@ namespace Matterportable.Core
             prop = -1;
             bool any = _g.Bvh.Raycast(origin, direction, maxDistance, out hit, _isProp);
             float best = any ? hit.Distance : maxDistance;
-            for (int i = 0; i < Props.Count; i++)
+            for (int i = 0; i < Props.Count && !Hidden; i++)
             {
                 if (i == Carried) continue;
                 var pose = Poses[i];
@@ -765,7 +743,7 @@ namespace Matterportable.Core
         public bool DeepestContact(Vec3 centre, float radius, out Vec3 push, out float depth)
         {
             bool any = _g.Bvh.DeepestContact(centre, radius, out push, out depth, _isProp);
-            for (int i = 0; i < Props.Count; i++)
+            for (int i = 0; i < Props.Count && !Hidden; i++)
             {
                 if (i == Carried) continue;
                 var pose = Poses[i];

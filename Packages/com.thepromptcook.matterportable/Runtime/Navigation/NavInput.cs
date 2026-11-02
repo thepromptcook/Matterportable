@@ -78,6 +78,7 @@ namespace Matterportable
                 case KeyCode.Q: return UnityEngine.InputSystem.Key.Q;
                 case KeyCode.E: return UnityEngine.InputSystem.Key.E;
                 case KeyCode.F: return UnityEngine.InputSystem.Key.F;
+                case KeyCode.U: return UnityEngine.InputSystem.Key.U;
                 case KeyCode.H: return UnityEngine.InputSystem.Key.H;
                 case KeyCode.P: return UnityEngine.InputSystem.Key.P;
                 case KeyCode.UpArrow: return UnityEngine.InputSystem.Key.UpArrow;

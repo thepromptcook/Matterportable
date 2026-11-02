@@ -95,6 +95,40 @@ namespace Matterportable.Tests
         }
 
         [Test]
+        public void CleanPhotosReplaceOnlyThePaintedFaces()
+        {
+            var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mpt-clean-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                System.IO.Directory.CreateDirectory(System.IO.Path.Combine(dir, "recon", "clean"));
+                System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "recon", "clean", "clean.json"),
+                    "{\"faces\": [{\"sweep\": 1, \"face\": 3, \"file\": \"001/face3.jpg\", \"painted\": \"001/painted3.png\"}, {\"sweep\": 9, \"face\": 0, \"file\": \"x.jpg\"}]}");
+                var model = TestSpaces.RoomModel();
+                Assert.IsFalse(model.HasCleanPanoramas);
+                Assert.AreEqual(1, CleanPanoramas.Apply(dir, model.Sweeps), "sweep 9 doesn't exist");
+                Assert.IsNull(model.Sweeps[0].CleanFaces);
+                var faces = model.Sweeps[1].CleanFaces;
+                Assert.AreEqual("recon/clean/001/face3.jpg", faces[3]);
+                Assert.AreEqual(model.Sweeps[1].Entry.Tiers[1].FacePath(0), faces[0], "the others are the photo's (largest tier)");
+                Assert.AreEqual("recon/clean/001/painted3.png", model.Sweeps[1].PaintedProps[3], "which prop each pixel had painted out");
+                Assert.IsNull(model.Sweeps[1].PaintedProps[0]);
+
+                var map = new RgbImage(4, 4); // prop 6 (7) painted out in the bottom row
+                for (int x = 0; x < 4; x++) map.Pixels[3 * x] = 7;
+                System.IO.Directory.CreateDirectory(System.IO.Path.Combine(dir, "recon", "clean", "001"));
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(dir, "recon", "clean", "001", "painted3.png"), Png.Encode(map));
+                var bytes = CleanPanoramas.LoadPainted(dir, model.Sweeps[1].PaintedProps, out int size);
+                Assert.AreEqual(4, size);
+                Assert.AreEqual(6 * 16, bytes.Length);
+                Assert.AreEqual(7, bytes[3 * 16 + 2], "face 3, bottom row");
+                Assert.AreEqual(0, bytes[3 * 16 + 4 * 3 + 2], "face 3, top row");
+                Assert.AreEqual(0, bytes[2], "face 0 has none");
+                Assert.IsTrue(model.HasCleanPanoramas);
+            }
+            finally { try { System.IO.Directory.Delete(dir, true); } catch (System.IO.IOException) { } }
+        }
+
+        [Test]
         public void DoorsSwingAwayFromTheViewerAndBack()
         {
             var room = TestSpaces.Room(0, Door);

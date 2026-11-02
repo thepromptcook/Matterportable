@@ -19,7 +19,7 @@ namespace Matterportable.Core
     {
         None = 0, Inside = 1, Dollhouse = 1 << 1, Floorplan = 1 << 2, Forward = 1 << 3, Back = 1 << 4, Left = 1 << 5, Right = 1 << 6,
         TurnLeft = 1 << 7, TurnRight = 1 << 8, Next = 1 << 9, Previous = 1 << 10, Home = 1 << 11, FloorUp = 1 << 12, FloorDown = 1 << 13,
-        Tour = 1 << 14, DebugView = 1 << 15, Walk = 1 << 16, Run = 1 << 17, Use = 1 << 18,
+        Tour = 1 << 14, DebugView = 1 << 15, Walk = 1 << 16, Run = 1 << 17, Use = 1 << 18, EmptyRooms = 1 << 19,
     }
 
     /// <summary>One frame of input. Pixels have y pointing down; the ray is the pointer's, in the Core frame.</summary>
@@ -49,9 +49,13 @@ namespace Matterportable.Core
         public int PanoA, PanoB, DepthA, DepthB, PoseA, PoseB, DebugView;
         public float Blend, Projection, ClipHeight;
         public bool UseDepth, ValidA, ValidB, CullBack;
+        /// <summary>The sweeps whose clean photos (furniture painted out) go in slots A/B (-1: none yet), and whether the
+        /// room shows them everywhere ("empty rooms") or only where a moved prop hid it.</summary>
+        public int CleanA, CleanB;
+        public bool EmptyRooms;
 
         /// <summary>Before the navigator's first frame: mesh textures only, nothing clipped.</summary>
-        public static readonly ViewBinding None = new ViewBinding { PanoA = -1, PanoB = -1, DepthA = -1, DepthB = -1, ClipHeight = 1e9f };
+        public static readonly ViewBinding None = new ViewBinding { PanoA = -1, PanoB = -1, DepthA = -1, DepthB = -1, CleanA = -1, CleanB = -1, ClipHeight = 1e9f };
     }
 
     /// <summary>
@@ -91,6 +95,18 @@ namespace Matterportable.Core
         /// <summary>Walk mode's movable furniture and doors, where they are now (engines draw each prop with its pose); null
         /// when the scan has none.</summary>
         public PropWorld Props { get; }
+        /// <summary>"Empty rooms" (U): the furniture is gone and the room shows its clean photos (engines hide the props).</summary>
+        public bool EmptyRooms => Props?.Hidden ?? false;
+
+        /// <summary>Turns "empty rooms" on or off (whatever is carried is put down first).</summary>
+        public void SetEmptyRooms(bool on)
+        {
+            if (Props == null) return;
+            Props.Drop();
+            Props.Hidden = on;
+            HighlightProp = -1;
+        }
+
         /// <summary>The prop under the pointer that F or a click would act on (engines highlight it), or -1.</summary>
         public int HighlightProp { get; private set; } = -1;
 
@@ -248,6 +264,7 @@ namespace Matterportable.Core
             if (Has(NavKeys.Walk)) SetMode(ViewMode.Walk);
             if (Has(NavKeys.DebugView)) DebugView = (DebugView + 1) % ViewerText.DebugViews.Length;
             if (Has(NavKeys.Tour)) AutoTour = !AutoTour;
+            if (Has(NavKeys.EmptyRooms)) SetEmptyRooms(!EmptyRooms);
             if (Has(NavKeys.Home)) GoTo(Math.Max(0, Math.Min(StartSweep, n - 1)));
             if (Has(NavKeys.Next)) GoTo((CurrentSweep + 1) % n);
             if (Has(NavKeys.Previous)) GoTo((CurrentSweep - 1 + n) % n);
@@ -539,6 +556,11 @@ namespace Matterportable.Core
         void UpdateHands(in NavigatorInput input)
         {
             var eye = new Vec3(_walker.Eye.X, _walkEyeY, _walker.Eye.Z);
+            if (Props.Hidden)
+            {
+                HighlightProp = -1;
+                return;
+            }
             var origin = input.PointerOver ? input.RayOrigin : eye;
             var dir = input.PointerOver ? input.RayDirection : CameraRotation * Vec3.Forward;
             HighlightProp = Props.Carried < 0 && Props.Raycast(origin, dir, PropWorld.Reach, out _, out int prop) ? prop : -1;
@@ -738,12 +760,22 @@ namespace Matterportable.Core
             // Standing at the sweep, the camera sees nothing that is hidden from it: no depth test, so the depth map's
             // resolution draws no lines along outlines, and the view is exactly the photo. Once props have moved, what
             // they covered must give way, so the test stays on.
-            bool atSweep = blend <= 0 && a >= 0 && (CameraPosition - SweepPos(a)).Length < 0.01f && !(Props?.AnyMoved ?? false);
+            bool cleanRoom = Props != null && (Props.AnyMoved || Props.Hidden); // the room needs its clean photos somewhere
+            bool atSweep = blend <= 0 && a >= 0 && (CameraPosition - SweepPos(a)).Length < 0.01f && !cleanRoom;
             int ia = validA ? a : validB ? b : Math.Max(0, a), last = Sweeps.Count - 1;
+            int shownA = validA ? a : validB ? b : -1, shownB = validB ? b : validA ? a : -1;
+            if (cleanRoom)
+            {
+                _panos.RequestClean(shownA);
+                _panos.RequestClean(shownB);
+            }
             View = new ViewBinding
             {
-                PanoA = validA ? a : validB ? b : -1,
-                PanoB = validB ? b : validA ? a : -1,
+                PanoA = shownA,
+                PanoB = shownB,
+                CleanA = cleanRoom && shownA >= 0 && _panos.HasClean(shownA) ? shownA : -1,
+                CleanB = cleanRoom && shownB >= 0 && _panos.HasClean(shownB) ? shownB : -1,
+                EmptyRooms = EmptyRooms,
                 DepthA = depthA ? a : -1,
                 DepthB = depthB ? b : depthA ? a : -1,
                 PoseA = Math.Min(ia, last),

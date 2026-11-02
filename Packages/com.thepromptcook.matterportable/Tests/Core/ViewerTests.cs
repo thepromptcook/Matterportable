@@ -11,8 +11,9 @@ namespace Matterportable.Tests
         {
             public PanoramaScheduler Scheduler;
             public readonly List<(int sweep, int size)> Pending = new List<(int, int)>();
-            public readonly List<int> Unloaded = new List<int>(), Depth = new List<int>();
+            public readonly List<int> Unloaded = new List<int>(), Depth = new List<int>(), Clean = new List<int>();
             public void Load(int sweep, PanoTier tier) => Pending.Add((sweep, tier.Size));
+            public void LoadClean(int sweep, IReadOnlyList<string> faces, IReadOnlyList<string> painted) => Clean.Add(sweep);
             public void ComputeDepth(int sweep) => Depth.Add(sweep);
             public void Unload(int sweep) => Unloaded.Add(sweep);
 
@@ -23,6 +24,8 @@ namespace Matterportable.Tests
                 foreach (var (sweep, size) in done) Scheduler.Loaded(sweep, size);
                 foreach (var d in Depth) Scheduler.DepthReady(d);
                 Depth.Clear();
+                foreach (var c in Clean) Scheduler.CleanLoaded(c, 2048);
+                Clean.Clear();
             }
         }
 
@@ -279,6 +282,36 @@ namespace Matterportable.Tests
             Assert.IsTrue(v.Nav.Props.AnyMoved);
             Assert.IsTrue(v.Nav.Props.Raycast(new Vec3(2.2f, 1.5f, 2f), Vec3.Down, 2f, out var hit, out int prop) && prop == -1 && hit.Point.Y < 0.05f,
                 "where it stood, the floor shows");
+        }
+
+        [Test]
+        public void MovedFurnitureBringsTheCleanPhotosAndEmptyRoomsTakesItAway()
+        {
+            var model = TestSpaces.RoomModel((new Vec3(1.8f, 0, 1.6f), new Vec3(2.6f, 0.75f, 2.4f)));
+            foreach (var sweep in model.Sweeps) sweep.CleanFaces = new[] { "c0", "c1", "c2", "c3", "c4", "c5" };
+            var v = new Viewer(space: model);
+            v.Frames(2);
+            v.Nav.SetMode(ViewMode.Walk);
+            v.Frames(10);
+            Assert.AreEqual(-1, v.Nav.View.CleanA, "nothing moved: the photos as they are");
+            v.Nav.Props.Carry(0, v.Nav.CameraPosition, 45);
+            v.Frames(5, new NavigatorInput { Held = NavKeys.TurnLeft });
+            v.Nav.Props.Drop();
+            v.Frames(5);
+            Assert.AreEqual(v.Nav.View.PanoA, v.Nav.View.CleanA, "a moved prop brings the clean photos of the shown sweep");
+            Assert.IsFalse(v.Nav.View.EmptyRooms);
+
+            v.Frames(1, new NavigatorInput { Pressed = NavKeys.EmptyRooms });
+            Assert.IsTrue(v.Nav.EmptyRooms);
+            Assert.IsTrue(v.Nav.View.EmptyRooms);
+            Assert.IsTrue(v.Nav.Props.Moved(0), "hidden props count as moved: their photo pixels are refused");
+            var at = v.Nav.Props.Poses[0].Apply(new Vec3(2.2f, 0.5f, 2f));
+            Assert.IsTrue(v.Nav.Props.Raycast(new Vec3(at.X, 1.5f, at.Z), Vec3.Down, 2f, out var hit, out int prop));
+            Assert.AreEqual(-1, prop, "nothing in the way where the table is");
+            Assert.Less(hit.Point.Y, 0.05f);
+            v.Frames(3);
+            Assert.AreEqual(-1, v.Nav.HighlightProp);
+            Assert.IsNull(ViewerText.PropHint(v.Nav));
         }
 
         [Test]

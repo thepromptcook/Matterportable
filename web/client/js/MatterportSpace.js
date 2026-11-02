@@ -20,6 +20,8 @@ export class MatterportSpace {
     scene.add(this.root);
     this.depthScene = new THREE.Scene();
     this.gray = Object.assign(new THREE.DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1), { needsUpdate: true });
+    this.grayArray = Object.assign(new THREE.DataArrayTexture(new Uint8Array(24).fill(128), 1, 1, 6), { needsUpdate: true }); // no panorama
+    this.noneArray = Object.assign(new THREE.DataArrayTexture(new Uint8Array(6), 1, 1, 6), { format: THREE.RedFormat, needsUpdate: true }); // nothing painted
     this.uniforms = {
       posA: { value: new THREE.Vector3() }, posB: { value: new THREE.Vector3() },
       rotA: { value: new THREE.Matrix3() }, rotB: { value: new THREE.Matrix3() },
@@ -29,12 +31,19 @@ export class MatterportSpace {
       mpBackground: { value: new THREE.Vector3() },
       depthA: { value: null }, depthB: { value: null }, cullBack: { value: false }, spaceMatrix: { value: new THREE.Matrix4() },
       movedProps: { value: Array.from({ length: 64 }, () => new THREE.Vector4(0, 0, 0, 0)) }, // 1 per prop that has moved
+      mpClean: { value: new THREE.Vector4(0, 0, 0, 0) }, // clean A bound, clean B bound, empty rooms
     };
     this.props = []; // per prop: { mesh, tint } (null: nothing to draw)
-    for (const p of ['A', 'B']) for (let i = 0; i < 6; i++) this.uniforms[`pano${p}${i}`] = { value: this.gray };
+    for (const p of ['A', 'B']) {
+      this.uniforms[`pano${p}`] = { value: this.grayArray };
+      this.uniforms[`clean${p}`] = { value: this.grayArray };
+      this.uniforms[`painted${p}`] = { value: this.noneArray };
+    }
   }
 
   get hasMesh() { return !!this.mesh; }
+  /** Whether any sweep has its furniture painted out (tools/reconstruct): "empty rooms" works. */
+  get hasCleanPanoramas() { return this.sweeps.some((s) => s.clean); }
   fileUrl(relative) { return `api/spaces/${encodeURIComponent(this.id)}/files/${relative}`; }
 
   /** Loads space `id` (already prepared by the server). */
@@ -59,7 +68,9 @@ export class MatterportSpace {
     this.settings = { depthMapSize, anisotropy: this.options.anisotropy ?? anisotropy };
     this.uniforms.mpBackground.value.set(r, g, b);
     if (hasMesh) this.buildMesh(info, geometry);
-    this.sweeps = info.sweeps.map((s) => ({ tiers: s.tiers, position: fromCore(s.position), rotation: new THREE.Matrix3().fromArray(s.rotation) }));
+    this.sweeps = info.sweeps.map((s) => ({
+      tiers: s.tiers, position: fromCore(s.position), rotation: new THREE.Matrix3().fromArray(s.rotation), clean: s.clean, painted: s.painted,
+    }));
     for (let c = 0; c < 6; c++) {
       this.uniforms.faceRight.value[c].fromArray(info.faceRight[c]);
       this.uniforms.faceUp.value[c].set(...info.faceUp[c], 0);
@@ -156,11 +167,16 @@ export class MatterportSpace {
     this.panoramas.run(f.commands);
     this.panoramas.update();
     this.sky.position.copy(camera.position);
-    const u = this.uniforms, faces = this.panoramas.faces, depth = this.panoramas.depth;
-    for (let i = 0; i < 6; i++) {
-      u[`panoA${i}`].value = faces.get(f.panoA)?.[i] ?? this.gray;
-      u[`panoB${i}`].value = faces.get(f.panoB)?.[i] ?? this.gray;
-    }
+    const u = this.uniforms, faces = this.panoramas.faces, depth = this.panoramas.depth, clean = this.panoramas.clean;
+    u.panoA.value = faces.get(f.panoA) ?? this.grayArray;
+    u.panoB.value = faces.get(f.panoB) ?? this.grayArray;
+    const cA = clean.get(f.cleanA), cB = clean.get(f.cleanB);
+    u.cleanA.value = cA?.faces ?? this.grayArray;
+    u.cleanB.value = cB?.faces ?? this.grayArray;
+    u.paintedA.value = cA?.painted ?? this.noneArray;
+    u.paintedB.value = cB?.painted ?? this.noneArray;
+    const empty = !!(f.propFlags & 4);
+    u.mpClean.value.set(cA ? 1 : 0, cB ? 1 : 0, empty ? 1 : 0, 0);
     u.depthA.value = depth.get(f.depthA)?.texture ?? null;
     u.depthB.value = depth.get(f.depthB)?.texture ?? null;
     u.posA.value.copy(this.sweeps[f.poseA].position);
@@ -177,6 +193,7 @@ export class MatterportSpace {
     this.props.forEach((pr, k) => {
       const p = f.props[k];
       if (!pr || !p) return;
+      pr.mesh.visible = !empty; // "empty rooms"
       pr.mesh.position.set(p[0], p[1], -p[2]);
       pr.mesh.quaternion.set(-p[3], -p[4], p[5], p[6]);
       pr.tint.value.set(p[7], p[8], p[9], p[10]);
@@ -192,5 +209,7 @@ export class MatterportSpace {
     this.materials?.forEach((m) => m.dispose());
     this.props.forEach((pr) => { pr?.mesh.geometry.dispose(); pr?.mesh.material.forEach((m) => m.dispose()); });
     this.textures.forEach((t) => t.dispose());
+    this.grayArray.dispose();
+    this.noneArray.dispose();
   }
 }

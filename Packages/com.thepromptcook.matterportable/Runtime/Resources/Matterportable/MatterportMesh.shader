@@ -60,20 +60,28 @@ Shader "Matterportable/Mesh"
                 float3 dB = i.wpos - _MP_PosB.xyz;
                 float3 lA = mul((float3x3)_MP_RotA, dA);
                 float3 lB = mul((float3x3)_MP_RotB, dB);
-                float3 cA = MP_SamplePano(_MP_PanoA, sampler_MP_PanoA, lA, ddx(lA), ddy(lA));
-                float3 cB = MP_SamplePano(_MP_PanoB, sampler_MP_PanoB, lB, ddx(lB), ddy(lB));
+                float3 lAdx = ddx(lA), lAdy = ddy(lA), lBdx = ddx(lB), lBdy = ddy(lB);
 
-                float visA = _MP_Valid.x;
-                float visB = _MP_Valid.y;
-                bool holeA = false; // a moved prop hid this point from sweep A
+                // The depth test: -1 where a moved (or hidden) prop hid the point from that sweep.
+                float a = 1, b = 1;
                 if (_MP_State.z > 0.5)
                 {
-                    float a = MP_DepthVisibility(_MP_DepthA, sampler_MP_DepthA, mul((float3x3)_MP_SpaceRot, dA), length(dA), _MP_PropId);
-                    float b = MP_DepthVisibility(_MP_DepthB, sampler_MP_DepthB, mul((float3x3)_MP_SpaceRot, dB), length(dB), _MP_PropId);
-                    holeA = a < 0;
-                    visA *= max(a, 0);
-                    visB *= max(b, 0);
+                    a = MP_DepthVisibility(_MP_DepthA, sampler_MP_DepthA, mul((float3x3)_MP_SpaceRot, dA), length(dA), _MP_PropId);
+                    b = MP_DepthVisibility(_MP_DepthB, sampler_MP_DepthB, mul((float3x3)_MP_SpaceRot, dB), length(dB), _MP_PropId);
                 }
+                // The room shows the clean photos (furniture painted out) where a moved prop was painted out or hid it,
+                // and everywhere in "empty rooms".
+                bool room = _MP_PropId < 0.5;
+                bool cleanA = room && _MP_Clean.x > 0.5 && (a < 0 || _MP_Clean.z > 0.5 || MP_PaintedMoved(_MP_PaintedA, sampler_MP_PaintedA, lA));
+                bool cleanB = room && _MP_Clean.y > 0.5 && (b < 0 || _MP_Clean.z > 0.5 || MP_PaintedMoved(_MP_PaintedB, sampler_MP_PaintedB, lB));
+                float3 cA, cB;
+                if (cleanA) cA = MP_SamplePano(_MP_CleanA, sampler_MP_CleanA, lA, lAdx, lAdy);
+                else cA = MP_SamplePano(_MP_PanoA, sampler_MP_PanoA, lA, lAdx, lAdy);
+                if (cleanB) cB = MP_SamplePano(_MP_CleanB, sampler_MP_CleanB, lB, lBdx, lBdy);
+                else cB = MP_SamplePano(_MP_PanoB, sampler_MP_PanoB, lB, lBdx, lBdy);
+                float visA = _MP_Valid.x * (a < 0 ? (cleanA ? 1 : 0) : a);
+                float visB = _MP_Valid.y * (b < 0 ? (cleanB ? 1 : 0) : b);
+                bool holeA = a < 0 && !cleanA; // no clean photo: fill from the photo's surroundings
 
                 float wA, wB;
                 MP_BlendWeights(_MP_State.x, visA, visB, wA, wB);

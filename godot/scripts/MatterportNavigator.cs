@@ -49,6 +49,7 @@ namespace Matterportable
             Key.W or Key.Up => NavKeys.Forward, Key.S or Key.Down => NavKeys.Back, Key.A => NavKeys.Left, Key.D => NavKeys.Right,
             Key.Bracketright => NavKeys.Next, Key.Bracketleft => NavKeys.Previous, Key.Home => NavKeys.Home,
             Key.Pageup => NavKeys.FloorUp, Key.Pagedown => NavKeys.FloorDown, Key.P => NavKeys.Tour, Key.F2 => NavKeys.DebugView, Key.F => NavKeys.Use,
+            Key.U => NavKeys.EmptyRooms,
             _ => NavKeys.None,
         };
 

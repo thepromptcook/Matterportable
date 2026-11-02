@@ -56,6 +56,11 @@ namespace Matterportable.Core
         public Vec3 BoundsMin { get; }
         public Vec3 BoundsMax { get; }
         public int FloorCount => _floors.Count;
+        /// <summary>Whether any sweep has its furniture painted out (<see cref="CleanPanoramas"/>): "empty rooms" works.</summary>
+        public bool HasCleanPanoramas
+        {
+            get { foreach (var s in Sweeps) if (s.CleanFaces != null) return true; return false; }
+        }
         /// <summary>Each floor's height (the median of its sweeps' floor points).</summary>
         public IReadOnlyList<float> FloorHeights => _floors;
         /// <summary>The pieces of the scan Walk mode can move (<see cref="PropFinder"/>); empty without a mesh.</summary>
@@ -169,8 +174,10 @@ namespace Matterportable.Core
         {
             var meshPath = manifest.Mesh != null ? CacheLayout.Resolve(dir, manifest.Mesh.File) : null;
             var objects = Path.Combine(dir, PropFinder.FileName);
+            var clean = Path.Combine(dir, CleanPanoramas.Folder, "clean.json");
             string Key() => string.Join("|", dir, meshPath != null ? File.GetLastWriteTimeUtc(meshPath).Ticks : 0, manifest.Sweeps.Count,
-                cal.ToJson().ToJson(false), File.Exists(objects) ? File.GetLastWriteTimeUtc(objects).Ticks : 0);
+                cal.ToJson().ToJson(false), File.Exists(objects) ? File.GetLastWriteTimeUtc(objects).Ticks : 0,
+                File.Exists(clean) ? File.GetLastWriteTimeUtc(clean).Ticks : 0);
             lock (CacheLock)
                 if (_cache.key == Key()) return _cache.model;
             SpaceGeometry geo = null;
@@ -183,6 +190,8 @@ namespace Matterportable.Core
             }
             var model = new SpaceModel(manifest, cal, geo, SweepBuilder.Build(manifest, cal, geo, log));
             if (geo != null) model.Props = PropFinder.LoadOrFind(dir, geo, model.FloorHeights, log);
+            int cleaned = CleanPanoramas.Apply(dir, model.Sweeps);
+            if (cleaned > 0) log?.Info($"Clean panoramas (furniture painted out): {cleaned} sweeps.");
             lock (CacheLock) _cache = (Key(), model); // after objects.json was written
             return model;
         }
@@ -192,13 +201,16 @@ namespace Matterportable.Core
     public static class ViewerText
     {
         public const string KeyHint = "Drag to look · Click to move · W A S D step or walk · ←/→ turn · Wheel zoom · " +
-                                      "1/2/3/4 Inside/Dollhouse/Floor plan/Walk · Shift run · F move things · M measure · P tour · F1 stats · H hide · Esc menu";
+                                      "1/2/3/4 Inside/Dollhouse/Floor plan/Walk · Shift run · F move things · U empty rooms · M measure · P tour · F1 stats · H hide · Esc menu";
+
+        /// <summary>The "empty rooms" button: what pressing it does.</summary>
+        public static string EmptyRoomsButton(Navigator nav) => nav.EmptyRooms ? "Furnished" : "Empty rooms";
 
         /// <summary>Walk mode's hint for what the hands hold or the pointer is on, or null.</summary>
         public static string PropHint(Navigator nav)
         {
             var world = nav.Props;
-            if (world == null || nav.Mode != ViewMode.Walk) return null;
+            if (world == null || nav.Mode != ViewMode.Walk || world.Hidden) return null;
             if (world.Carried >= 0) return world.DropRefused ? "No room here: it would land on you · Wheel: turn it" : "F or click: put it down · Wheel: turn it";
             int i = nav.HighlightProp;
             if (i < 0) return null;

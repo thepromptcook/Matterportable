@@ -451,6 +451,42 @@ namespace Matterportable.Core
             return best > 0;
         }
 
+        [ThreadStatic] static int[] _nearestStack;
+
+        /// <summary>The triangle closest to the point within radius, ignoring those marked in <paramref name="skip"/>, or
+        /// -1. Safe to call from several threads.</summary>
+        public int Nearest(Vec3 centre, float radius, bool[] skip)
+        {
+            if (TriangleCount == 0) return -1;
+            var stack = _nearestStack ?? (_nearestStack = new int[128]);
+            float best = radius * radius;
+            int found = -1, sp = 0;
+            stack[sp++] = 0;
+            while (sp > 0)
+            {
+                ref Node node = ref _nodes[stack[--sp]];
+                float dx = Math.Max(0, Math.Max(node.Min.X - centre.X, centre.X - node.Max.X));
+                float dy = Math.Max(0, Math.Max(node.Min.Y - centre.Y, centre.Y - node.Max.Y));
+                float dz = Math.Max(0, Math.Max(node.Min.Z - centre.Z, centre.Z - node.Max.Z));
+                if (dx * dx + dy * dy + dz * dz > best) continue;
+                if (node.Count == 0)
+                {
+                    if (sp + 2 > stack.Length) Array.Resize(ref stack, stack.Length * 2);
+                    stack[sp++] = node.LeftOrFirst;
+                    stack[sp++] = node.LeftOrFirst + 1;
+                    continue;
+                }
+                for (int s = node.LeftOrFirst, end = node.LeftOrFirst + node.Count; s < end; s++)
+                {
+                    if (skip != null && skip[_tri[s]]) continue;
+                    float d2 = (centre - ClosestOnTriangle(centre, _v0[s], _e1[s], _e2[s])).SqrLength;
+                    if (d2 < best) { best = d2; found = _tri[s]; }
+                }
+            }
+            _nearestStack = stack;
+            return found;
+        }
+
         /// <summary>Closest point to p on the triangle a, a + ab, a + ac (Ericson, Real-Time Collision Detection 5.1.5).</summary>
         static Vec3 ClosestOnTriangle(Vec3 p, Vec3 a, Vec3 ab, Vec3 ac)
         {
