@@ -36,9 +36,10 @@ python3 tools/compare_fidelity.py /tmp/fid/a /tmp/fid/b
 # moving a prop on a real space (Walk mode: F on the middle of the view, turn, F): Godot, then the web page
 xvfb-run -a -s "-screen 0 1280x720x24" /opt/godot/godot --path godot --resolution 1280x720 --rendering-method gl_compatibility -- --open rGMMnZDh3Tf --mode walk --sweep 35 --yaw 46 --pitch 35 --move-prop -50 --screenshot /tmp/props/after.png
 #   web: ?open=rGMMnZDh3Tf&mode=walk&sweep=35&yaw=46&pitch=35&move=-50 (view=5: every prop coloured)
+#   "empty rooms" (U): Godot --empty, web empty=1 (the corner where the chair stood shows the clean photo either way)
 # reconstruction (CPU, pre-trained ONNX models, nothing trained): furniture painted out of the panoramas
-dotnet run --project tools/Matterportable.Cli -- masks MatterportCache/<id> --size 160   # which prop each pixel shows (~10 s)
-pip install -r tools/reconstruct/requirements.txt && python3 tools/reconstruct/clean_panos.py MatterportCache/<id>   # → recon/clean/
+dotnet run --project tools/Matterportable.Cli -- masks MatterportCache/<id> --size 160   # which prop each pixel shows (~15 s)
+pip install -r tools/reconstruct/requirements.txt && python3 tools/reconstruct/clean_panos.py MatterportCache/<id>   # → recon/clean/ (~15 min; --sweeps 35 redoes one)
 dotnet test tools/Matterportable.Core.Tests --filter Alignment
 dotnet run --project tools/Matterportable.Cli -- help   # download / demo / info / diagnose
 ```
@@ -202,14 +203,26 @@ navigator.
     (`CubeFaces.DepthCube(…, SpaceModel.PieceOfTriangle)`; Unity RGHalf, Godot Rgh, web: each piece drawn into the
     cube with its `pieceId`). The shaders refuse a moved prop's photo pixels for any other piece (`MP_Hides`, moved
     flags in `_MP_Moved` / `moved_props` / `movedProps`, the drawn piece in `_MP_PropId` / `prop_id` (pass a float in
-    Godot: an int is ignored) / `propId`), and fill the hole from the photo's surroundings (`MP_HoleFill`: rings of
-    directions around the hole, coarse mip) instead of the baked texture, which holds the prop.
+    Godot: an int is ignored) / `propId`). Where the sweep has clean photos (below), the room shows them there; without,
+    the hole is filled from the photo's surroundings (`MP_HoleFill`: rings of directions around the hole, coarse mip)
+    instead of the baked texture, which holds the prop.
+  - **Clean photos** (`recon/clean`, from the reconstruction): `CleanPanoramas.Apply` gives a sweep `CleanFaces` (the
+    painted face, else the photo) and `PaintedProps` (512 px 8-bit maps: prop + 1 that was painted out there). Once a
+    prop moved, or in "empty rooms" (U, HUD button; `Navigator.SetEmptyRooms` → `PropWorld.Hidden`: props hidden and
+    walked through), the navigator asks for the shown sweeps' clean photos (`PanoramaScheduler.RequestClean`, loader
+    `LoadClean`, `CleanLoaded`) and binds them (`ViewBinding.CleanA/B`, `EmptyRooms` → `_MP_Clean` / `mp_clean` /
+    `mpClean`). The room (piece 0) samples the clean photo where the painted map names a moved prop
+    (`MP_PaintedMoved`: the photo shows a prop wider than the scan, thin legs and backs) or the depth test hid it, and
+    everywhere in empty rooms. The sky does the same: the scan has holes behind furniture, and through them the sky
+    showed the photo's chair.
 - **Reconstruction** (offline, toward a clean 3D rebuild of the house; see the from-scratch skill's plan): Python in
-  `tools/reconstruct/`, pre-trained models only, CPU now and GPU later. Step 2 so far: `PropMasks.PieceMask` (Core)
-  ray-casts which prop each panorama pixel shows (CLI `masks`); `clean_panos.py` sharpens the biggest pieces with
-  MobileSAM (box prompts from those masks; ~0.5 s per face whatever its size, so only ~85 faces), grows the rest, and
-  paints them out with LaMa (fixed 512 px input, ~3.5 s per face) into `recon/clean/<sweep>/face<N>.jpg`. The viewers
-  don't use the clean faces yet.
+  `tools/reconstruct/`, pre-trained models only, CPU now and GPU later. Step 2: `PropMasks.PieceMask` (Core)
+  ray-casts which prop each panorama pixel shows (CLI `masks`), counting room surfaces within 12 cm of a prop
+  (`PropMasks.Halo`, `Bvh.Nearest`) as the prop: the scan misses thin parts the photo shows (a prop's box was too
+  big: a diagonal chair in a corner took the floor and LaMa painted it wall-coloured). `clean_panos.py` sharpens the
+  biggest pieces with MobileSAM (box prompts from those masks; ~0.5 s per face whatever its size, so only ~85 faces),
+  grows every mask by the calibration slack, and paints them out with LaMa (fixed 512 px input, ~3.5 s per face) into
+  `recon/clean/<sweep>/face<N>.jpg` + `painted<N>.png` and `clean.json` (the viewers read it at load).
 - **Measurement** behaviour (clicks, Escape, snapping, axes, units, what shows in which view, colours and line
   widths) lives only in Core `MeasureTool`; the engine files feed it the pointer ray and draw the screen-space
   `MeasureOverlay` items (line, dot, ring, label). While measuring, `Navigator.Measuring` hides markers and leaves
@@ -221,7 +234,12 @@ navigator.
 - **Web specifics:**
   - **Frame:** three.js is right-handed with Y up like Godot, so web = Core with Z mirrored (`Core.js coreOf/fromCore`).
   - **Image rows:** photos are decoded with `imageOrientation: 'flipY'`, so V is bottom-up as in Core.
-  - **Panoramas** are six 2D textures each (WebGL can't index sampler arrays at run time).
+  - **Panoramas** are six-layer `THREE.DataArrayTexture`s (photos, clean photos, painted maps; WebGL has 16 texture
+    units, so six 2D textures per photo left no room). `faceArray` allocates storage without data
+    (`source.dataReady = false`, `needsUpdate`, `renderer.initTexture`: every mip level when `generateMipmaps`), then
+    each decoded face goes in with `renderer.copyTextureToTexture3D(new THREE.Texture(bitmap), array, box, layer)`
+    (pass the region box: an ImageBitmap has no depth), two per frame, mipmaps once after the last layer. A closed
+    ImageBitmap reports width 0: read sizes before uploading.
   - **Depth cubes** are rendered on the GPU (`PanoramaCache.renderDepth`).
   - **Culling:** Core triangle order is back-facing to three.js, so `cullBack` discards `gl_FrontFacing`.
   - **Server-built data:** WebAssembly runs the Core interpreted, about 25× slower than native (the BVH took 4.9 s vs

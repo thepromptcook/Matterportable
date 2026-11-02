@@ -120,6 +120,7 @@ https://github.com/thepromptcook/Matterportable.git?path=/Packages/com.theprompt
 | Shift | Run |
 | ← → · Q E · Left-drag | Turn and look around |
 | F or click | Pick up the furniture under the pointer · put it down · open or close a door |
+| U or **Empty rooms** | Hide all the furniture and show the rooms empty (needs the clean photos, below); again to bring it back |
 | Mouse wheel | Zoom (field of view) · turn what you carry |
 | 1 · 2 · 3 | Back to Inside (moves to the nearest sweep) · Dollhouse · Floor plan |
 
@@ -136,8 +137,19 @@ You walk at the height the photos were taken from, and the scanned mesh is solid
   stays in front of you, short of walls, and you put it down on whatever is below it (the floor, or a table). It
   keeps its own photo, and it blocks you where you leave it. The pieces are found automatically the first time a
   space opens (saved in `objects.json` next to it); F2 → *Props* colours every piece that can move. Where something
-  stood, no photo ever saw the floor and wall behind it: that spot is filled from the photo's surroundings, which
-  reads as empty floor and wall up close, with a soft smear rather than detail.
+  stood, no photo ever saw the floor and wall behind it. With the clean photos (below) that spot shows the floor and
+  wall painted in; without them it is filled from the photo's surroundings, a soft smear rather than detail.
+- **Clean photos (furniture painted out):** run once per space, on the CPU, with pre-trained models (nothing to
+  train; about 15 minutes for a 58-sweep house on 4 cores, models downloaded once):
+  ```bash
+  dotnet run --project tools/Matterportable.Cli -- masks MatterportCache/<id> --size 160
+  pip install -r tools/reconstruct/requirements.txt
+  python3 tools/reconstruct/clean_panos.py MatterportCache/<id>
+  ```
+  The first finds which piece of furniture each photo pixel shows, from the scan. The second outlines the big pieces
+  with Segment Anything and paints all of them out with LaMa, into `MatterportCache/<id>/recon/clean/`. Unity, Godot
+  and the web page pick the result up the next time the space opens: moved furniture leaves the painted floor and
+  wall behind, and **Empty rooms** (U) shows the whole house without its furniture.
 
 **Measure mode** works like Matterport's: click to place points. With *Continuous lines* on (the default), each click
 adds a connected segment; **Esc** or **✓ Confirm** ends the line, and Esc again leaves measure mode. Points snap to

@@ -228,6 +228,19 @@ slower; 4 processes × 1 thread = 1 × 4 threads, ~2 faces/s), decoder 0.1 s; La
 only faces with big pieces, using box prompts from the scan's own prop masks, and grow the scan mask elsewhere.
 PIL `MaxFilter` with a big kernel on a 2048 px mask takes minutes: dilate at a quarter size.
 
+Step 2 is in the viewers (all three): the painted faces load as a second panorama per sweep, plus an 8-bit map of
+which prop each pixel had painted out. The room draws the clean photo where the map names a prop that moved, and
+everywhere in "empty rooms" (props hidden). What it took to get no remnants (sweep 35 of rGMMnZDh3Tf, the corner
+chair, is the test case; compare with `--move-prop` / `move=` and `--empty` / `empty=1`):
+- **The scan's prop masks miss thin parts** (chair backs and legs, often not in the mesh at all), so the photo shows
+  them on the wall behind. Mark room surfaces within ~12 cm of a prop's triangles as the prop (a nearest-triangle
+  query that skips the room's). A 2D dilation of the depth cube's piece channel was not enough (the back posts were
+  4° from the scan's chair), and the prop's box was too much (a diagonal chair's box took a big floor area, which
+  LaMa painted wall-coloured).
+- **Choose the clean photo from the painted map**, not the depth test: it says exactly where the clean photo differs.
+- **The sky shows through holes in the scan** behind furniture: give the sky shader the same rule. (A fragment that
+  ignores the F2 debug views is the sky.)
+
 ## Pitfalls already hit (don't repeat them)
 
 - **Measure mode:**
@@ -239,7 +252,11 @@ PIL `MaxFilter` with a big kernel on a 2048 px mask takes minutes: dilate at a q
   - A C# local function can't capture a `ref` or `in` parameter (CS1628); copy it to a local first.
 - **Web:**
   - three r169 GLSL3 `ShaderMaterial`s don't get `gl_FragColor`; declare `layout(location = 0) out vec4`.
-  - Sampler arrays can't be indexed by a run-time value in WebGL 2: use six samplers and a branch.
+  - Sampler arrays can't be indexed by a run-time value in WebGL 2, and there are only 16 texture units: put each
+    panorama in a six-layer `DataArrayTexture` (sampler2DArray). Allocate it empty (`source.dataReady = false`,
+    `needsUpdate`, `renderer.initTexture`; every mip level when `generateMipmaps`), copy each ImageBitmap in with
+    `copyTextureToTexture3D` and an explicit region box (an ImageBitmap has no depth), and generate mipmaps once after
+    the last layer. A closed ImageBitmap reports width 0.
   - `ImageBitmap` ignores `texture.flipY`; decode with `imageOrientation: 'flipY'`.
   - Target `net$(BundledNETCoreAppTargetFrameworkVersion)` with `RollForward=LatestMajor`, so the user's .NET 10 SDK
     builds and runs it without .NET 8 installed.

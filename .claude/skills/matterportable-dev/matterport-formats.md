@@ -88,6 +88,10 @@ The server is graphql-java style. Validation errors carry a line/column location
 - **What height columns find:** 47 pieces and 3 open doors in the house; beds with nightstands and sectional sofas
   merge into patches too big to carry. Furniture usually has floor under it in the scan (chair legs), and the baked
   texture behind furniture holds smears of it.
+- **Thin parts are missing from the mesh:** a corner chair's back posts and crest rail weren't in the scan, so the
+  photos showed them on the wall behind, about 4° (several cm) from the chair's scanned triangles. Room surfaces
+  within 12 cm of a prop's triangles cover them. The mesh also has holes behind furniture (the wall and floor the
+  scanner never saw), where a viewer sees its background.
 
 ## Panoramas
 
