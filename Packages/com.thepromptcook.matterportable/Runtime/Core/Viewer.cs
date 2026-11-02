@@ -174,7 +174,7 @@ namespace Matterportable.Core
         {
             var meshPath = manifest.Mesh != null ? CacheLayout.Resolve(dir, manifest.Mesh.File) : null;
             var objects = Path.Combine(dir, PropFinder.FileName);
-            var clean = Path.Combine(dir, CleanPanoramas.Folder, "clean.json");
+            var clean = CleanPanoramas.IndexPath(dir);
             string Key() => string.Join("|", dir, meshPath != null ? File.GetLastWriteTimeUtc(meshPath).Ticks : 0, manifest.Sweeps.Count,
                 cal.ToJson().ToJson(false), File.Exists(objects) ? File.GetLastWriteTimeUtc(objects).Ticks : 0,
                 File.Exists(clean) ? File.GetLastWriteTimeUtc(clean).Ticks : 0);

@@ -1,6 +1,7 @@
 // Drives the web version in headless Chromium (Playwright). Used by tools/web-check.sh.
 //   node tools/web_check.js <base url> <out dir> [extra query]          demo runs: inside (after a move), dollhouse, measure, walk
 //   node tools/web_check.js <base url> <out dir> --compare <id> [sweeps] photo-vs-mesh pairs for tools/compare_alignment.py
+//   node tools/web_check.js <base url> <out dir> --page <name> '<query>' one page, e.g. 'open=rGMMnZDh3Tf&mode=walk&move=-50' -> <name>.png
 const { chromium } = require('playwright');
 
 const [base, out, ...rest] = process.argv.slice(2);
@@ -21,7 +22,14 @@ async function openPage(browser, query, size) {
   // (aa=0, aniso=1) because every pixel is shaded on the CPU here.
   const browser = await chromium.launch({ headless: !process.env.DISPLAY, args: ['--ignore-gpu-blocklist', '--use-gl=angle', '--use-angle=gl'] });
   let failed = false;
-  if (rest[0] === '--compare') {
+  if (rest[0] === '--page') {
+    const [, name, query] = rest;
+    const { page, errors } = await openPage(browser, `?${query}`, { width: 1280, height: 720 });
+    const checks = await page.evaluate(() => window.mp.checks ?? window.mp.error);
+    await page.screenshot({ path: `${out}/${name}.png` });
+    console.log(`${errors.length ? 'error: ' : ''}[Matterportable] ${checks}\n  screenshot: ${out}/${name}.png` + (errors.length ? `\n  page errors: ${errors.join(' | ')}` : ''));
+    failed = errors.length > 0;
+  } else if (rest[0] === '--compare') {
     const id = rest[1], n = Number(rest[2] ?? 6);
     const { page, errors } = await openPage(browser, `?open=${encodeURIComponent(id)}`, { width: 960, height: 540 });
     const count = await page.evaluate(() => window.mp.sweepCount());
@@ -39,15 +47,18 @@ async function openPage(browser, query, size) {
   } else {
     const extra = rest.join('&');
     const runs = [['inside', 'goto=1'], ['dollhouse', 'mode=dollhouse'], ['measure', 'measure=1'], ['walk', 'mode=walk&yaw=54&walk=1']];
-    for (const [name, query] of runs) {
-      const { page, errors } = await openPage(browser, `?open=demo&${query}${extra ? '&' + extra : ''}`, { width: 1600, height: 900 });
+    // Side by side: each page is its own renderer.
+    const results = await Promise.all(runs.map(async ([name, query]) => {
+      const { page, errors } = await openPage(browser, `?open=demo&${query}${extra ? '&' + extra : ''}`, { width: 960, height: 540 });
       const checks = await page.evaluate(() => window.mp.checks ?? window.mp.error);
       await page.screenshot({ path: `${out}/${name}.png` });
+      await page.close();
       const expect = { measure: '1 measurement(s), drawing yes, menu closed', walk: 'mode Walk' }[name] ?? 'Loaded';
-      const ok = errors.length === 0 && String(checks).includes(expect);
+      return { name, checks, errors, ok: errors.length === 0 && String(checks).includes(expect) };
+    }));
+    for (const { name, checks, errors, ok } of results) {
       console.log(`${ok ? '' : 'error: '}[Matterportable] ${checks}\n  screenshot: ${out}/${name}.png` + (errors.length ? `\n  page errors: ${errors.join(' | ')}` : ''));
       if (!ok) failed = true;
-      await page.close();
     }
   }
   await browser.close();

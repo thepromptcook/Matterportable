@@ -59,7 +59,7 @@ namespace Matterportable.Web
         public async Task<object> OpenDemoAsync()
         {
             var dir = Dir(DemoId);
-            if (!SpaceManifest.Exists(dir) || !File.Exists(Path.Combine(dir, CleanPanoramas.Folder, "clean.json"))) // (older demos lack the clean photos)
+            if (!SpaceManifest.Exists(dir) || !File.Exists(CleanPanoramas.IndexPath(dir))) // (older demos lack the clean photos)
                 await Task.Run(() =>
                 {
                     var space = SyntheticSpace.Generate(new SyntheticOptions { ModelId = DemoId, PanoSizes = new[] { 96, 384 }, TextureSize = 192, CleanPhotos = true });

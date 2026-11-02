@@ -25,7 +25,7 @@ namespace Matterportable.Web
             var cal = SpaceCalibration.LoadOrDefault(dir);
             var meshPath = manifest.Mesh != null ? CacheLayout.Resolve(dir, manifest.Mesh.File) : null;
             var objects = Path.Combine(dir, PropFinder.FileName);
-            var clean = Path.Combine(dir, CleanPanoramas.Folder, "clean.json");
+            var clean = CleanPanoramas.IndexPath(dir);
             long Ticks(string path) => File.Exists(path) ? File.GetLastWriteTimeUtc(path).Ticks : 0;
             string Key() => $"v{Version}|{(meshPath != null ? File.GetLastWriteTimeUtc(meshPath).Ticks : 0)}|{manifest.Sweeps.Count}|{cal.ToJson().ToJson(false)}|" +
                             $"{Ticks(objects)}|{Ticks(clean)}";

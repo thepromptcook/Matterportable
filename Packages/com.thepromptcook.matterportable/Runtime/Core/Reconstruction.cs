@@ -53,12 +53,15 @@ namespace Matterportable.Core
     {
         public const string Folder = "recon/clean";
 
+        /// <summary>The space's clean.json (the painted faces); the viewers reload when it changes.</summary>
+        public static string IndexPath(string dir) => Path.Combine(dir, Folder, "clean.json");
+
         /// <summary>Gives each sweep with painted faces its <see cref="SweepInfo.CleanFaces"/>: six paths in the space
         /// folder (the painted face, or the photo's where nothing was painted), and <see cref="SweepInfo.PaintedProps"/>
         /// (8-bit images: prop + 1 where it was painted out, 0 elsewhere). Returns how many sweeps have them.</summary>
         public static int Apply(string dir, IReadOnlyList<SweepInfo> sweeps)
         {
-            var path = Path.Combine(dir, Folder, "clean.json");
+            var path = IndexPath(dir);
             if (!File.Exists(path)) return 0;
             JsonValue json;
             try { json = JsonValue.Parse(File.ReadAllText(path)); }

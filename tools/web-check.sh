@@ -3,7 +3,7 @@
 #   $OUT/inside.png (after moving from sweep 0 to sweep 1)  $OUT/dollhouse.png  $OUT/measure.png
 # (default OUT=/tmp/matterportable-web). Fails on page errors. Extra arguments go into the page URL (e.g. sweep=3,
 # view=2). Real-space comparison: tools/web-check.sh --compare <model id> [sweeps], then
-# python3 tools/compare_alignment.py $OUT.
+# python3 tools/compare_alignment.py $OUT. One page: tools/web-check.sh --page <name> '<query>' -> $OUT/<name>.png.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 export PATH="/opt/dotnet:$PATH" DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1

@@ -519,7 +519,7 @@ namespace Matterportable.Core
                     IoUtil.WriteAllBytesAtomic(Path.Combine(spaceDir, CleanPanoramas.Folder, painted), Png.Encode(map));
                     faces.Add(JsonValue.NewObject().Set("sweep", s).Set("face", f).Set("file", file).Set("painted", painted));
                 }
-            IoUtil.WriteAllTextAtomic(Path.Combine(spaceDir, CleanPanoramas.Folder, "clean.json"), JsonValue.NewObject().Set("faces", faces).ToJson(true));
+            IoUtil.WriteAllTextAtomic(CleanPanoramas.IndexPath(spaceDir), JsonValue.NewObject().Set("faces", faces).ToJson(true));
         }
 
         /// <summary>Builds solver input straight from memory (no files), as if decoded from disk.</summary>

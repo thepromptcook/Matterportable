@@ -85,7 +85,7 @@ namespace Matterportable
         {
             const string id = "DemoSpace01";
             var dir = CacheLayout.SpaceDir(CacheRoot(), id);
-            if (SpaceManifest.Exists(dir) && File.Exists(Path.Combine(dir, CleanPanoramas.Folder, "clean.json"))) return dir; // (older demos lack the clean photos)
+            if (SpaceManifest.Exists(dir) && File.Exists(CleanPanoramas.IndexPath(dir))) return dir; // (older demos lack the clean photos)
             var space = SyntheticSpace.Generate(new SyntheticOptions
             {
                 ModelId = id,

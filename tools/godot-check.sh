@@ -26,16 +26,22 @@ if [[ ! -d godot/.godot || $missing_uid == 1 ]]; then
   [[ $missing_uid == 1 ]] && echo "note: generated .uid files for new Godot scripts/shaders - commit them"
 fi
 
-rc=0
-for run in inside dollhouse measure walk; do
+# The four runs are separate processes on separate virtual displays: run them side by side.
+pids=()
+runs=(inside dollhouse measure walk)
+for run in "${runs[@]}"; do
   mode=$run; extra=()
   [[ $run == inside ]] && extra=(--goto 1)                  # exercise a full sweep-to-sweep transition
   [[ $run == measure ]] && { mode=inside; extra=(--measure); }
   [[ $run == walk ]] && extra=(--yaw 54 --walk 1)
-  log="$OUT/$run.log"
-  timeout 180 xvfb-run -a -s "-screen 0 1600x900x24" "$GODOT" --path godot --audio-driver Dummy \
-    --rendering-driver opengl3 --rendering-method gl_compatibility -- --open demo --mode "$mode" --screenshot "$OUT/$run.png" "${extra[@]}" "$@" >"$log" 2>&1
-  status=$?
+  timeout 180 xvfb-run -a -s "-screen 0 960x540x24" "$GODOT" --path godot --resolution 960x540 --audio-driver Dummy \
+    --rendering-driver opengl3 --rendering-method gl_compatibility -- --open demo --mode "$mode" --screenshot "$OUT/$run.png" "${extra[@]}" "$@" >"$OUT/$run.log" 2>&1 &
+  pids+=($!)
+done
+rc=0
+for i in "${!runs[@]}"; do
+  run=${runs[$i]}; log="$OUT/$run.log"
+  wait "${pids[$i]}"; status=$?
   expect="screenshot saved"
   [[ $run == measure ]] && expect="1 measurement(s), drawing yes, menu closed"
   [[ $run == walk ]] && expect="mode Walk"

@@ -5,6 +5,7 @@ A name counts as used if it appears anywhere else in the C# sources (tests and t
 used by Unity or by callers outside this repo; list those in ALLOWED.
 Usage: python3 tools/find_unused.py
 """
+import collections
 import pathlib
 import re
 import sys
@@ -23,10 +24,10 @@ DECL = re.compile(r"(?:public|internal)\s+(?:static\s+|readonly\s+|override\s+|s
 
 
 def main():
-    files = [p for p in ROOT.rglob("*.cs") if "/bin/" not in str(p) and "/obj/" not in str(p)]
+    files = [p for p in ROOT.rglob("*.cs") if not any(d in p.parts for d in ("bin", "obj", ".godot", "MatterportCache", "Library"))]
     # The web client calls the WebAssembly Core's [JSExport] methods from JavaScript.
     scripts = list((ROOT / "web" / "client" / "js").glob("*.js"))
-    text = "\n".join(p.read_text() for p in files + scripts)
+    uses = collections.Counter(re.findall(r"\w+", "\n".join(p.read_text() for p in files + scripts)))  # one pass, not one regex per name
     unused = []
     for p in files:
         rel = p.relative_to(ROOT).as_posix()
@@ -34,7 +35,7 @@ def main():
             continue
         for m in DECL.finditer(p.read_text()):
             name = m.group(1)
-            if name not in ALLOWED and len(re.findall(r"\b" + re.escape(name) + r"\b", text)) <= 1:
+            if name not in ALLOWED and uses[name] <= 1:
                 unused.append(f"{name}  ({rel})")
     for u in sorted(set(unused)):
         print("unused:", u)
