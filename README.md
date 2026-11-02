@@ -146,7 +146,7 @@ You walk at the height the photos were taken from, and the scanned mesh is solid
   pip install -r tools/reconstruct/requirements.txt
   python3 tools/reconstruct/clean_panos.py MatterportCache/<id>
   ```
-  The first finds which piece of furniture each photo pixel shows, from the scan. The second outlines the big pieces
+  The first finds which piece of furniture each photo pixel shows, from the scan. The second copies in what other photos saw behind each piece, outlines the big pieces
   with Segment Anything and paints all of them out with LaMa, into `MatterportCache/<id>/recon/clean/`. Unity, Godot
   and the web page pick the result up the next time the space opens: moved furniture leaves the painted floor and
   wall behind, and **Empty rooms** (U) shows the whole house without its furniture.

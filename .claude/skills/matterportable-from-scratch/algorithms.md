@@ -93,5 +93,12 @@ chair, is the test case; compare with `--move-prop` / `move=` and `--empty` / `e
   4° from the scan's chair), and the prop's box was too much (a diagonal chair's box took a big floor area, which
   LaMa painted wall-coloured).
 - **Choose the clean photo from the painted map**, not the depth test: it says exactly where the clean photo differs.
+- **Copy before inventing:** most of what furniture hides in one photo was photographed from another sweep. For each
+  hidden pixel, ray-cast the scan with the props skipped to the room surface behind, then take the nearest other
+  sweep that sees that point first, not at a grazing angle, with no prop within 12 cm of it and no prop's box (grown
+  by 10 cm) across the line of sight. Without the last test the copies were full of chair-leg shards (the scan misses
+  thin parts the photos show). Match exposure per source on a band just outside the hole, then let LaMa paint only
+  what no sweep saw. On the user's house that copies about a quarter of the hidden pixels (two thirds before the
+  sight-line test); the floor around the dining chairs came out clean wood instead of a smear.
 - **The sky shows through holes in the scan** behind furniture: give the sky shader the same rule. (A fragment that
   ignores the F2 debug views is the sky.)

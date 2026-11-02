@@ -25,7 +25,7 @@ Commands:
         Summarise a cached space.
   diagnose <space dir>
         Print the diagnostics report (same as Copy Diagnostics in Unity; signed links redacted).
-  masks <space dir> [--size 256] [--out DIR]
+  masks <space dir> [--size 256] [--fill-size 256] [--out DIR]
         For the reconstruction step: per panorama face that shows props, a PNG of which prop each pixel shows
         (red + 256 * green = prop index + 1) and masks.json (default DIR: <space dir>/recon/masks).
 ";
@@ -124,6 +124,7 @@ Commands:
         {
             var dir = o.Positional(0, "space dir");
             int size = int.Parse(o.Get("size", "256"), CultureInfo.InvariantCulture);
+            int fillSize = int.Parse(o.Get("fill-size", "256"), CultureInfo.InvariantCulture); // 0: no reprojection maps
             var outDir = o.Get("out", Path.Combine(dir, "recon", "masks"));
             var model = SpaceModel.Load(dir, SpaceManifest.Load(dir), SpaceCalibration.LoadOrDefault(dir), new ConsoleLog());
             if (model.Geometry == null) throw new ArgumentException("The space has no mesh.");
@@ -143,15 +144,30 @@ Commands:
                     File.WriteAllBytes(Path.Combine(outDir, file), Png.Encode(img));
                     var props = JsonValue.NewObject();
                     foreach (var kv in counts) props.Set(kv.Key.ToString(CultureInfo.InvariantCulture), kv.Value);
-                    var tier = model.Sweeps[s].Entry.Tiers.Where(t => t.Tiles <= 1).OrderBy(t => t.Size).LastOrDefault(); // as CleanPanoramas
-                    faces.Add(JsonValue.NewObject().Set("sweep", s).Set("face", f).Set("mask", file)
-                        .Set("photo", tier?.FacePath(f)).Set("props", props));
+                    var entry = JsonValue.NewObject().Set("sweep", s).Set("face", f).Set("mask", file).Set("photo", Photo(model, s)?.FacePath(f)).Set("props", props);
+                    if (fillSize > 0) // where other sweeps saw what the props hide (the painting script copies it in)
+                    {
+                        var fill = $"s{s:D3}_f{f}.fill";
+                        File.WriteAllBytes(Path.Combine(outDir, fill), Reprojection.Build(model, s, f, fillSize).Serialize());
+                        entry.Set("fill", fill);
+                    }
+                    faces.Add(entry);
                 }
-            var json = JsonValue.NewObject().Set("size", size).Set("props", model.Props.Count).Set("faces", faces);
+            var photos = JsonValue.NewArray(); // per sweep, its six photo faces (sources for the fills)
+            for (int s = 0; s < model.Sweeps.Count; s++)
+            {
+                var faceFiles = JsonValue.NewArray();
+                for (int f = 0; f < 6; f++) faceFiles.Add(JsonValue.From(Photo(model, s)?.FacePath(f)));
+                photos.Add(faceFiles);
+            }
+            var json = JsonValue.NewObject().Set("size", size).Set("props", model.Props.Count).Set("photos", photos).Set("faces", faces);
             File.WriteAllText(Path.Combine(outDir, "masks.json"), json.ToJson(true));
             Console.WriteLine($"{faces.Count} faces show props ({model.Props.Count} props, {model.Sweeps.Count} sweeps) in {(DateTime.UtcNow - started).TotalSeconds:0.0}s -> {outDir}");
             return 0;
         }
+
+        /// <summary>The largest single-file tier (what the faces were painted at, as CleanPanoramas).</summary>
+        static PanoTier Photo(SpaceModel model, int sweep) => model.Sweeps[sweep].Entry.Tiers.Where(t => t.Tiles <= 1).OrderBy(t => t.Size).LastOrDefault();
 
         static int Info(Options o)
         {

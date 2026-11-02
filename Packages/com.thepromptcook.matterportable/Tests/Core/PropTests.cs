@@ -132,6 +132,46 @@ namespace Matterportable.Tests
         }
 
         [Test]
+        public void OtherSweepsShowWhatAPropHides()
+        {
+            // The demo house: what sweep 0 can't see behind the table, other sweeps photographed; copying their photo
+            // pixels must give what a photo without the furniture shows there.
+            var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mpt-fill-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var space = SyntheticSpace.Generate(new SyntheticOptions { PanoSizes = new[] { 16, 64 }, TextureSize = 64, CleanPhotos = true });
+                space.WriteTo(dir);
+                var model = SpaceModel.Load(dir, SpaceManifest.Load(dir), SpaceCalibration.LoadOrDefault(dir), null);
+                int hidden = 0, found = 0, close = 0;
+                for (int s = 0; s < 3; s++)
+                    for (int f = 0; f < 6; f++)
+                    {
+                        var r = Reprojection.Build(model, s, f, 64);
+                        for (int y = 0; y < 64; y++)
+                            for (int x = 0; x < 64; x++)
+                            {
+                                int o = y * 64 + x;
+                                if (r.Hidden[o] == 0) continue;
+                                hidden++;
+                                if (r.Sweep[o] < 0) continue;
+                                found++;
+                                Assert.AreNotEqual(s, r.Sweep[o]);
+                                var src = space.Panoramas[r.Sweep[o]][1][r.Face[o]];
+                                int sx = Math.Min(63, (int)(r.S[o] / 65535f * 64)), sy = Math.Min(63, (int)(r.T[o] / 65535f * 64));
+                                var clean = space.CleanFaces[s][f];
+                                int a = 3 * (sy * 64 + sx), b = 3 * ((63 - y) * 64 + x); // the map is top-down, images bottom-up
+                                int diff = Math.Abs(src.Pixels[a] - clean.Pixels[b]) + Math.Abs(src.Pixels[a + 1] - clean.Pixels[b + 1]) + Math.Abs(src.Pixels[a + 2] - clean.Pixels[b + 2]);
+                                if (diff < 90) close++;
+                            }
+                    }
+                Assert.Greater(hidden, 50);
+                Assert.Greater(found, hidden / 5, "other sweeps saw some of it");
+                Assert.Greater(close, found * 6 / 10, "and what they saw is what the clean photo shows");
+            }
+            finally { try { System.IO.Directory.Delete(dir, true); } catch (System.IO.IOException) { } }
+        }
+
+        [Test]
         public void CleanPhotosReplaceOnlyThePaintedFaces()
         {
             var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mpt-clean-" + Guid.NewGuid().ToString("N"));

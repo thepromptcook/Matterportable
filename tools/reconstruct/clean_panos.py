@@ -9,14 +9,17 @@
 2. Segment Anything (MobileSAM, ONNX) sharpens the outline of every piece big enough to matter, from a box around
    its scan mask. The encoder costs ~0.5 s per face on 4 cores whatever the size, so it runs on the faces with the
    biggest pieces only (--sam-faces); everywhere the scan's mask, grown to cover calibration slack, is painted too.
-3. LaMa (ONNX, fixed 512 px input, ~3.5 s) paints the pieces out, on a square crop around them.
+3. What another sweep photographed behind a piece is copied in from that photo (the CLI's fill maps: the room
+   surface behind each pixel and the nearest sweep that saw it unblocked), colour-matched on a band around the
+   piece. On the user's house that covers about two thirds of what furniture hides.
+4. LaMa (ONNX, fixed 512 px input, ~3.5 s) paints what no photo saw, on a square crop around it.
 
 Writes <space>/recon/clean/<sweep>/face<N>.jpg (only the faces that changed), painted<N>.png (512 px, 8-bit: which
 prop each pixel had painted out, prop + 1; the viewers show the clean photo there once that prop moved) and clean.json
 (--sweeps redoes some sweeps and keeps the rest). Pre-trained models are downloaded once into <cache>/_models
 (pip install onnxruntime numpy pillow). Not committed: MatterportCache/.
 """
-import argparse, json, os, sys, time, urllib.request, zipfile
+import argparse, collections, json, os, sys, time, urllib.request, zipfile
 import numpy as np
 import onnxruntime as ort
 from PIL import Image, ImageFilter
@@ -99,6 +102,89 @@ def grow(mask, pixels):
     return np.asarray(img.resize((w, h), Image.BILINEAR)) > 64
 
 
+def read_fill(path):
+    """The CLI's fill map (Reprojection.Serialize): sweep, face, hidden, s, t per pixel, rows top-down."""
+    b = open(path, 'rb').read()
+    n = int.from_bytes(b[4:8], 'little')
+    N, o = n * n, 8
+    sweep = np.frombuffer(b, np.int16, N, o).reshape(n, n); o += 2 * N
+    face = np.frombuffer(b, np.uint8, N, o).reshape(n, n); o += N
+    o += N  # hidden
+    s = np.frombuffer(b, np.uint16, N, o).reshape(n, n) / 65535.0; o += 2 * N
+    t = np.frombuffer(b, np.uint16, N, o).reshape(n, n) / 65535.0
+    return sweep, face, s, t
+
+
+class Photos:
+    """Other sweeps' photo faces as float arrays, a few kept in memory."""
+    def __init__(self, space, paths):
+        self.space, self.paths, self.cache = space, paths, collections.OrderedDict()
+
+    def get(self, sweep, face):
+        key = (sweep, face)
+        if key not in self.cache:
+            self.cache[key] = np.asarray(Image.open(os.path.join(self.space, self.paths[sweep][face])).convert('RGB'), np.float32)
+            if len(self.cache) > 24:
+                self.cache.popitem(last=False)
+        self.cache.move_to_end(key)
+        return self.cache[key]
+
+
+def sample(img, x, y):
+    """Bilinear samples of img (h, w, 3) at pixel coordinates x, y."""
+    h, w = img.shape[:2]
+    x, y = np.clip(x, 0, w - 1.001), np.clip(y, 0, h - 1.001)
+    x0, y0 = x.astype(int), y.astype(int)
+    fx, fy = (x - x0)[:, None], (y - y0)[:, None]
+    return (img[y0, x0] * (1 - fx) * (1 - fy) + img[y0, x0 + 1] * fx * (1 - fy) +
+            img[y0 + 1, x0] * (1 - fx) * fy + img[y0 + 1, x0 + 1] * fx * fy)
+
+
+def reproject(face, hole, fill, photos):
+    """face with the hole's pixels other sweeps saw copied in (gain-matched per source sweep on the band around the
+    hole), and what is still missing."""
+    sweep, src_face, s, t = fill
+    w, h = face.size
+    n = sweep.shape[0]
+    target = np.asarray(face, np.float32)
+    band = grow(hole, max(4, w // 128)) & ~hole
+    ys, xs = np.nonzero(hole | band)
+    my, mx = np.minimum(ys * n // h, n - 1), np.minimum(xs * n // w, n - 1)
+    sw, sf = sweep[my, mx], src_face[my, mx]
+    # The source position: bilinear between map pixels where the four agree on the source, else the nearest.
+    fy, fx = (ys + 0.5) * n / h - 0.5, (xs + 0.5) * n / w - 0.5
+    y0, x0 = np.clip(np.floor(fy).astype(int), 0, n - 2), np.clip(np.floor(fx).astype(int), 0, n - 2)
+    same = np.ones(len(ys), bool)
+    for dy, dx in ((0, 0), (0, 1), (1, 0), (1, 1)):
+        same &= (sweep[y0 + dy, x0 + dx] == sw) & (src_face[y0 + dy, x0 + dx] == sf)
+    ax, ay = np.clip(fx - x0, 0, 1), np.clip(fy - y0, 0, 1)
+    def lerp(m):
+        v = (m[y0, x0] * (1 - ax) * (1 - ay) + m[y0, x0 + 1] * ax * (1 - ay) + m[y0 + 1, x0] * (1 - ax) * ay + m[y0 + 1, x0 + 1] * ax * ay)
+        return np.where(same, v, m[my, mx])
+    us, vt = lerp(s), lerp(t)
+    out = target.copy()
+    filled = np.zeros((h, w), bool)
+    in_hole = hole[ys, xs]
+    for src in np.unique(sw[sw >= 0]):
+        pick = sw == src
+        colours = np.zeros((pick.sum(), 3), np.float32)
+        for f in np.unique(sf[pick]):
+            sel = np.nonzero(pick)[0][sf[pick] == f]
+            img = photos.get(int(src), int(f))
+            colours[np.searchsorted(np.nonzero(pick)[0], sel)] = sample(img, us[sel] * img.shape[1] - 0.5, (1 - vt[sel]) * img.shape[0] - 0.5)
+        idx = np.nonzero(pick)[0]
+        ring = ~in_hole[idx]  # band pixels: the photo is real there, so the two should agree
+        gain = np.ones(3, np.float32)
+        if ring.sum() >= 50:
+            gain = np.clip(np.median(target[ys[idx][ring], xs[idx][ring]], 0) / np.maximum(np.median(colours[ring], 0), 1), 0.6, 1.6)
+        keep = in_hole[idx]
+        out[ys[idx][keep], xs[idx][keep]] = np.clip(colours[keep] * gain, 0, 255)
+        filled[ys[idx][keep], xs[idx][keep]] = True
+    result = Image.fromarray(out.astype(np.uint8))
+    soft = Image.fromarray((filled * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(2))
+    return Image.composite(result, face, soft), hole & ~filled
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('space')
@@ -106,6 +192,7 @@ def main():
     ap.add_argument('--sam-min', type=float, default=0.03, help='a piece must cover this share of a face for it')
     ap.add_argument('--min-hole', type=float, default=0.003, help='faces whose pieces cover less are left alone')
     ap.add_argument('--limit', type=int, default=0, help='only the first N faces (testing)')
+    ap.add_argument('--no-fill', action='store_true', help="paint everything with LaMa (don't copy from other sweeps)")
     ap.add_argument('--sweeps', default='', help='only these sweeps, e.g. 3,35 (the others in clean.json are kept)')
     args = ap.parse_args()
     space = os.path.abspath(args.space)
@@ -122,8 +209,9 @@ def main():
     models = os.path.join(os.path.dirname(space), '_models')
     fetch_models(models)
     sam, lama = Sam(models), Lama(models)
+    photos = Photos(space, info.get('photos', []))
     out_root = os.path.join(space, 'recon', 'clean')
-    written, t_sam, t_lama, started = [], 0.0, 0.0, time.time()
+    written, t_sam, t_lama, t_fill, started = [], 0.0, 0.0, 0.0, time.time()
     for i, f in enumerate(faces):
         face = Image.open(os.path.join(space, f['photo'])).convert('RGB')
         w, h = face.size
@@ -155,8 +243,13 @@ def main():
             hole |= region
             if prop < 255:  # 8 bits
                 painted[region & (painted == 0)] = prop + 1
+        missing = hole
+        if f.get('fill') and not args.no_fill:
+            t = time.time()
+            face, missing = reproject(face, hole, read_fill(os.path.join(masks_dir, f['fill'])), photos)
+            t_fill += time.time() - t
         t = time.time()
-        clean = lama.paint(face, hole)
+        clean = lama.paint(face, missing) if missing.any() else face
         t_lama += time.time() - t
         folder = os.path.join(out_root, '%03d' % f['sweep'])
         os.makedirs(folder, exist_ok=True)
@@ -166,7 +259,7 @@ def main():
         written.append({'sweep': f['sweep'], 'face': f['face'], 'file': '%03d/%s' % (f['sweep'], name),
                         'painted': '%03d/%s' % (f['sweep'], painted_name), 'sam': (f['sweep'], f['face']) in sam_faces})
         if (i + 1) % 10 == 0 or i + 1 == len(faces):
-            print(f'{i + 1}/{len(faces)} faces, outlines {t_sam:.0f}s, painting {t_lama:.0f}s, total {time.time() - started:.0f}s', flush=True)
+            print(f'{i + 1}/{len(faces)} faces, outlines {t_sam:.0f}s, copying {t_fill:.0f}s, painting {t_lama:.0f}s, total {time.time() - started:.0f}s', flush=True)
     index = os.path.join(out_root, 'clean.json')
     if only and os.path.exists(index):  # keep the other sweeps' faces
         written += [f for f in json.load(open(index))['faces'] if f['sweep'] not in only]

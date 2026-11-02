@@ -46,6 +46,135 @@ namespace Matterportable.Core
     }
 
     /// <summary>
+    /// Where other sweeps saw what a prop hides in one panorama face: for each pixel that shows a prop (or lies within
+    /// <c>band</c> pixels of one, for colour matching), the room surface behind it (a ray through the scan with the
+    /// props skipped), and the nearest other sweep that saw that surface unblocked, as (sweep, face, s, t) in that
+    /// sweep's photo. Rows top-down (as image files), so the painting script reads it without flipping.
+    /// </summary>
+    public sealed class Reprojection
+    {
+        public int Size;
+        public short[] Sweep;   // -1: nothing to take, or no other sweep saw it
+        public byte[] Face, Hidden; // Hidden: 1 where the photo shows a prop (0 in the band around it)
+        public ushort[] S, T;   // in the source face, 0..65535 (t from the bottom, like CubeFaces)
+
+        /// <summary>How far a source sweep may be from the surface point.</summary>
+        public const float Reach = 8f;
+
+        public static Reprojection Build(SpaceModel model, int sweep, int slice, int size, int band = 3)
+        {
+            var cal = model.Calibration;
+            var layout = CubeFaces.TryBuildLookup(cal.Faces, out _, out _, out _) ? cal.Faces : CubeFaces.DefaultMatterportLayout();
+            var bvh = model.Geometry.Bvh;
+            var pieces = model.PieceOfTriangle;
+            var isProp = new bool[pieces.Length];
+            var room = new bool[pieces.Length];
+            for (int t = 0; t < pieces.Length; t++) { isProp[t] = pieces[t] > 0; room[t] = !isProp[t]; }
+            var mask = PropMasks.PieceMask(model, sweep, slice, size); // bottom-up
+            var r = new Reprojection { Size = size, Sweep = new short[size * size], Face = new byte[size * size], Hidden = new byte[size * size],
+                                       S = new ushort[size * size], T = new ushort[size * size] };
+            var s = model.Sweeps[sweep];
+            System.Threading.Tasks.Parallel.For(0, size, y =>
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    int o = (size - 1 - y) * size + x; // top-down
+                    r.Sweep[o] = -1;
+                    bool hidden = mask[y * size + x] > 0, near = hidden;
+                    for (int dy = -band; dy <= band && !near; dy++)
+                        for (int dx = -band; dx <= band && !near; dx++)
+                        {
+                            int yy = y + dy, xx = x + dx;
+                            near = yy >= 0 && yy < size && xx >= 0 && xx < size && mask[yy * size + xx] > 0;
+                        }
+                    if (!near) continue;
+                    r.Hidden[o] = (byte)(hidden ? 1 : 0);
+                    var dir = (s.WorldFromPano * layout[slice].Direction((x + 0.5f) / size, (y + 0.5f) / size)).Normalized;
+                    if (!bvh.Raycast(s.Position, dir, 100f, out var behind, isProp)) continue; // the room behind the props
+                    var p = s.Position + dir * behind.Distance;
+                    int best = Source(model, sweep, p, behind.Normal, room);
+                    if (best < 0) continue;
+                    var src = model.Sweeps[best];
+                    int face = CubeFaces.Lookup(layout, src.WorldFromPano.Transposed * (p - src.Position), out float fs, out float ft);
+                    if (face < 0) continue;
+                    r.Sweep[o] = (short)best;
+                    r.Face[o] = (byte)face;
+                    r.S[o] = (ushort)Math.Round(Math.Min(1f, Math.Max(0f, fs)) * 65535);
+                    r.T[o] = (ushort)Math.Round(Math.Min(1f, Math.Max(0f, ft)) * 65535);
+                }
+            });
+            return r;
+        }
+
+        /// <summary>The nearest other sweep that sees p as the first surface, not too obliquely, with no prop near p
+        /// and none along the way: the photos show props wider than the scan (chair legs), so the line of sight must
+        /// miss every prop's box grown by <see cref="Margin"/>. Or -1.</summary>
+        static int Source(SpaceModel model, int except, Vec3 p, Vec3 normal, bool[] room)
+        {
+            var bvh = model.Geometry.Bvh;
+            if (bvh.Nearest(p, PropMasks.Halo, room) >= 0) return -1;
+            int best = -1;
+            float bestDist = Reach;
+            for (int i = 0; i < model.Sweeps.Count; i++)
+            {
+                if (i == except) continue;
+                var v = p - model.Sweeps[i].Position;
+                float d = v.Length;
+                if (d >= bestDist || d < 0.3f) continue;
+                var dir = v / d;
+                if (Math.Abs(Vec3.Dot(dir, normal)) < 0.25f) continue; // grazing: smeared in that photo
+                if (!bvh.Raycast(model.Sweeps[i].Position, dir, d + 0.2f, out var hit)) continue;
+                if (Math.Abs(hit.Distance - d) > 0.03f + 0.01f * d || !room[hit.Triangle]) continue;
+                if (CrossesProp(model.Props, model.Sweeps[i].Position, dir, d - 0.05f)) continue;
+                best = i;
+                bestDist = d;
+            }
+            return best;
+        }
+
+        /// <summary>How far around a prop's box a line of sight must pass.</summary>
+        public const float Margin = 0.1f;
+
+        static bool CrossesProp(IReadOnlyList<Prop> props, Vec3 o, Vec3 dir, float length)
+        {
+            foreach (var prop in props)
+            {
+                float near = 0, far = length;
+                bool hit = true;
+                for (int a = 0; a < 3 && hit; a++)
+                {
+                    float oa = a == 0 ? o.X : a == 1 ? o.Y : o.Z, da = a == 0 ? dir.X : a == 1 ? dir.Y : dir.Z;
+                    float lo = (a == 0 ? prop.Min.X : a == 1 ? prop.Min.Y : prop.Min.Z) - Margin;
+                    float hi = (a == 0 ? prop.Max.X : a == 1 ? prop.Max.Y : prop.Max.Z) + Margin;
+                    if (Math.Abs(da) < 1e-8f) { hit = oa >= lo && oa <= hi; continue; }
+                    float t0 = (lo - oa) / da, t1 = (hi - oa) / da;
+                    if (t0 > t1) { var x = t0; t0 = t1; t1 = x; }
+                    near = Math.Max(near, t0);
+                    far = Math.Min(far, t1);
+                    hit = near <= far;
+                }
+                if (hit) return true;
+            }
+            return false;
+        }
+
+        /// <summary>"MPR1", size, then per pixel (top-down): sweep int16, face uint8, hidden uint8, s and t uint16.</summary>
+        public byte[] Serialize()
+        {
+            int n = Size * Size;
+            var bytes = new byte[8 + n * 8];
+            bytes[0] = (byte)'M'; bytes[1] = (byte)'P'; bytes[2] = (byte)'R'; bytes[3] = (byte)'1';
+            BitConverter.GetBytes(Size).CopyTo(bytes, 4);
+            Buffer.BlockCopy(Sweep, 0, bytes, 8, n * 2);
+            Buffer.BlockCopy(Face, 0, bytes, 8 + n * 2, n);
+            Buffer.BlockCopy(Hidden, 0, bytes, 8 + n * 3, n);
+            Buffer.BlockCopy(S, 0, bytes, 8 + n * 4, n * 2);
+            Buffer.BlockCopy(T, 0, bytes, 8 + n * 6, n * 2);
+            return bytes;
+        }
+    }
+
+    /// <summary>
     /// The panoramas with the furniture painted out (tools/reconstruct/clean_panos.py writes recon/clean/ and
     /// clean.json): the room behind a moved prop, and everything in "empty rooms", is drawn from them.
     /// </summary>

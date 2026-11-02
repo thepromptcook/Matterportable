@@ -89,7 +89,10 @@ web and Godot specifics).
   (`PropMasks.Halo`, `Bvh.Nearest`) as the prop: the scan misses thin parts the photo shows (a prop's box was too
   big: a diagonal chair in a corner took the floor and LaMa painted it wall-coloured). `clean_panos.py` sharpens the
   biggest pieces with MobileSAM (box prompts from those masks; ~0.5 s per face whatever its size, so only ~85 faces),
-  grows every mask by the calibration slack, and paints them out with LaMa (fixed 512 px input, ~3.5 s per face) into
+  grows every mask by the calibration slack, copies in what other sweeps photographed behind each piece (the CLI's
+  fill maps, `Reprojection.Build`: the room surface behind the pixel with the props skipped, and the nearest other
+  sweep that saw it with no prop near it or across its line of sight; gain-matched per source on a band around the
+  hole), and paints the rest out with LaMa (fixed 512 px input, ~3.5 s per face) into
   `recon/clean/<sweep>/face<N>.jpg` + `painted<N>.png` and `clean.json` (the viewers read it at load).
 - **Measurement** behaviour (clicks, Escape, snapping, axes, units, what shows in which view, colours and line
   widths) lives only in Core `MeasureTool`; the engine files feed it the pointer ray and draw the screen-space
