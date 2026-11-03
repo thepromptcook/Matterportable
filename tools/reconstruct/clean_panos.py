@@ -2,13 +2,14 @@
 """Paint the furniture out of a space's panoramas: the textures of the clean, empty room shell (CPU only).
 
     dotnet run --project tools/Matterportable.Cli -- masks MatterportCache/<id> --size 160
-    python3 tools/reconstruct/clean_panos.py MatterportCache/<id> [--sam-faces 85] [--sam-min 0.03]
+    python3 tools/reconstruct/clean_panos.py MatterportCache/<id> [--sam-faces N] [--sam-min 0.03]
 
 1. Which prop each panorama pixel shows comes from the scan (the CLI's `masks`: ray casts from every sweep; the room's
    surfaces inside a prop's box count as the prop, for the thin parts the scan misses).
 2. Segment Anything (MobileSAM, ONNX) sharpens the outline of every piece big enough to matter, from a box around
-   its scan mask. The encoder costs ~0.5 s per face on 4 cores whatever the size, so it runs on the faces with the
-   biggest pieces only (--sam-faces); everywhere the scan's mask, grown to cover calibration slack, is painted too.
+   a loose box around its scan mask (the scan misses glass tops and thin legs). The encoder costs ~0.5 s per face on
+   4 cores whatever the size, about 2 minutes for a house; --sam-faces N limits it to the N faces with the biggest
+   pieces. Everywhere the scan's mask, grown to cover calibration slack, is painted too.
 3. What another sweep photographed behind a piece is copied in from that photo (the CLI's fill maps: the room
    surface behind each pixel and the nearest sweep that saw it unblocked), colour-matched on a band around the
    piece. On the user's house that covers about two thirds of what furniture hides.
@@ -19,7 +20,7 @@ prop each pixel had painted out, prop + 1; the viewers show the clean photo ther
 (--sweeps redoes some sweeps and keeps the rest). Pre-trained models are downloaded once into <cache>/_models
 (pip install onnxruntime numpy pillow). Not committed: MatterportCache/.
 """
-import argparse, collections, json, os, sys, time, urllib.request, zipfile
+import argparse, collections, gzip, json, os, sys, time, urllib.request, zipfile
 import numpy as np
 import onnxruntime as ort
 from PIL import Image, ImageFilter
@@ -90,7 +91,9 @@ class Lama:
         res = self.s.run(None, {'image': img.transpose(2, 0, 1)[None], 'mask': msk[None, None]})[0][0].transpose(1, 2, 0)
         res = Image.fromarray(np.clip(res if res.max() > 2 else res * 255, 0, 255).astype(np.uint8)).resize((side, side), Image.BICUBIC)
         out = face.copy()
-        out.paste(Image.composite(res, crop, m.filter(ImageFilter.GaussianBlur(3))), box[:2])
+        # A wide feather: a hole's edge often cuts a soft shadow, and a sharp seam there reads as a rectangle on the wall.
+        feather = m.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.GaussianBlur(max(3, side // 64)))
+        out.paste(Image.composite(res, crop, feather), box[:2])
         return out
 
 
@@ -103,8 +106,10 @@ def grow(mask, pixels):
 
 
 def read_fill(path):
-    """The CLI's fill map (Reprojection.Serialize): sweep, face, hidden, s, t per pixel, rows top-down."""
+    """The CLI's fill map (Reprojection.Serialize, gzipped): sweep, face, hidden, s, t per pixel, rows top-down."""
     b = open(path, 'rb').read()
+    if b[:2] == b'\x1f\x8b':
+        b = gzip.decompress(b)
     n = int.from_bytes(b[4:8], 'little')
     N, o = n * n, 8
     sweep = np.frombuffer(b, np.int16, N, o).reshape(n, n); o += 2 * N
@@ -164,22 +169,41 @@ def reproject(face, hole, fill, photos):
     us, vt = lerp(s), lerp(t)
     out = target.copy()
     filled = np.zeros((h, w), bool)
+    pasted = np.zeros_like(target)
+    has = np.zeros((h, w), bool)
     in_hole = hole[ys, xs]
     for src in np.unique(sw[sw >= 0]):
-        pick = sw == src
-        colours = np.zeros((pick.sum(), 3), np.float32)
-        for f in np.unique(sf[pick]):
-            sel = np.nonzero(pick)[0][sf[pick] == f]
+        idx = np.nonzero(sw == src)[0]
+        colours = np.zeros((len(idx), 3), np.float32)
+        for f in np.unique(sf[idx]):
+            sel = sf[idx] == f
             img = photos.get(int(src), int(f))
-            colours[np.searchsorted(np.nonzero(pick)[0], sel)] = sample(img, us[sel] * img.shape[1] - 0.5, (1 - vt[sel]) * img.shape[0] - 0.5)
-        idx = np.nonzero(pick)[0]
+            colours[sel] = sample(img, us[idx][sel] * img.shape[1] - 0.5, (1 - vt[idx][sel]) * img.shape[0] - 0.5)
         ring = ~in_hole[idx]  # band pixels: the photo is real there, so the two should agree
         gain = np.ones(3, np.float32)
         if ring.sum() >= 50:
             gain = np.clip(np.median(target[ys[idx][ring], xs[idx][ring]], 0) / np.maximum(np.median(colours[ring], 0), 1), 0.6, 1.6)
-        keep = in_hole[idx]
-        out[ys[idx][keep], xs[idx][keep]] = np.clip(colours[keep] * gain, 0, 255)
-        filled[ys[idx][keep], xs[idx][keep]] = True
+        pasted[ys[idx], xs[idx]] = colours * gain
+        has[ys[idx], xs[idx]] = True
+    # What is left of the colour difference on the band, spread smoothly into the hole (a cheap seamless blend): the
+    # copy then meets the photo without a step at its edge.
+    on_band = band & has
+    if on_band.sum() >= 50:
+        q = 4
+        residual = np.where(on_band[..., None], target - pasted, 0)
+        small = (w // q, h // q)
+        r_img = Image.fromarray(np.clip(residual + 128, 0, 255).astype(np.uint8)).resize(small, Image.BOX)
+        w_img = Image.fromarray((on_band * 255).astype(np.uint8)).resize(small, Image.BOX)
+        radius = max(2, w // (8 * q))
+        rb = np.asarray(r_img.filter(ImageFilter.GaussianBlur(radius)), np.float32) - 128
+        wb = np.asarray(w_img.filter(ImageFilter.GaussianBlur(radius)), np.float32) / 255
+        # r_img holds residual*weight around 128; dividing by the blurred weight interpolates it into the hole
+        corr = np.where(wb[..., None] > 0.02, rb / np.maximum(wb[..., None], 0.02), 0)
+        corr = np.asarray(Image.fromarray(np.clip(corr + 128, 0, 255).astype(np.uint8)).resize((w, h), Image.BILINEAR), np.float32) - 128
+        pasted = pasted + corr
+    keep = hole & has
+    out[keep] = np.clip(pasted[keep], 0, 255)
+    filled = keep
     result = Image.fromarray(out.astype(np.uint8))
     soft = Image.fromarray((filled * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(2))
     return Image.composite(result, face, soft), hole & ~filled
@@ -188,8 +212,8 @@ def reproject(face, hole, fill, photos):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('space')
-    ap.add_argument('--sam-faces', type=int, default=85, help='faces Segment Anything sharpens (about 0.55 s each)')
-    ap.add_argument('--sam-min', type=float, default=0.03, help='a piece must cover this share of a face for it')
+    ap.add_argument('--sam-faces', type=int, default=400, help='faces Segment Anything sharpens, biggest pieces first (about 0.55 s each; all of them by default)')
+    ap.add_argument('--sam-min', type=float, default=0.003, help='a piece must cover this share of a face for it')
     ap.add_argument('--min-hole', type=float, default=0.003, help='faces whose pieces cover less are left alone')
     ap.add_argument('--limit', type=int, default=0, help='only the first N faces (testing)')
     ap.add_argument('--no-fill', action='store_true', help="paint everything with LaMa (don't copy from other sweeps)")
@@ -225,7 +249,7 @@ def main():
             if not m.any():
                 continue
             ys, xs = np.nonzero(m)
-            pad = slack * 2
+            pad = max(slack * 2, (xs.max() - xs.min() + ys.max() - ys.min()) // 8)  # loose: the scan misses glass tops and thin parts
             regions.append((int(prop), m, (max(0, xs.min() - pad), max(0, ys.min() - pad), min(w, xs.max() + pad), min(h, ys.max() + pad))))
         outlines = [None] * len(regions)
         if (f['sweep'], f['face']) in sam_faces and regions:
@@ -255,7 +279,9 @@ def main():
         os.makedirs(folder, exist_ok=True)
         name, painted_name = 'face%d.jpg' % f['face'], 'painted%d.png' % f['face']
         clean.save(os.path.join(folder, name), quality=92)
-        Image.fromarray(painted).resize((512, 512), Image.NEAREST).save(os.path.join(folder, painted_name), optimize=True)
+        # Widened by the paint's feather: the viewers switch to the clean photo inside the map, and the clean photo only
+        # blends back to the photo outside the hole, so a tight map draws a hard edge where a shadow was removed.
+        Image.fromarray(painted).resize((512, 512), Image.NEAREST).filter(ImageFilter.MaxFilter(17)).save(os.path.join(folder, painted_name), optimize=True)
         written.append({'sweep': f['sweep'], 'face': f['face'], 'file': '%03d/%s' % (f['sweep'], name),
                         'painted': '%03d/%s' % (f['sweep'], painted_name), 'sam': (f['sweep'], f['face']) in sam_faces})
         if (i + 1) % 10 == 0 or i + 1 == len(faces):

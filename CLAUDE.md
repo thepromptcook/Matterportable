@@ -30,7 +30,7 @@ dotnet test tools/Matterportable.Core.Tests --filter <Name>   # one test class
 dotnet run --project tools/Matterportable.Cli -- download https://my.matterport.com/show/?m=<id>   # also: info, diagnose, masks, demo
 # the user's house, sweep 35: move the corner chair / empty rooms (Godot: --empty, web: empty=1)
 tools/godot-run.sh --open rGMMnZDh3Tf --mode walk --sweep 35 --yaw 46 --pitch 35 --move-prop -50 --screenshot /tmp/a.png
-# reconstruction (CPU, pre-trained ONNX models): furniture painted out of the panoramas (~15 min; --sweeps 35 redoes one)
+# reconstruction (CPU, pre-trained ONNX models): furniture painted out of the panoramas (masks ~3 min, painting ~20 min; --sweeps 35 redoes one)
 dotnet run --project tools/Matterportable.Cli -- masks MatterportCache/<id> --size 160
 pip install -r tools/reconstruct/requirements.txt && python3 tools/reconstruct/clean_panos.py MatterportCache/<id>
 ```

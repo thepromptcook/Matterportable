@@ -47,7 +47,7 @@ namespace Matterportable.Core
 
     /// <summary>
     /// Where other sweeps saw what a prop hides in one panorama face: for each pixel that shows a prop (or lies within
-    /// <c>band</c> pixels of one, for colour matching), the room surface behind it (a ray through the scan with the
+    /// <c>band</c> pixels of one, for colour matching), the floor behind it (a ray through the scan with the
     /// props skipped), and the nearest other sweep that saw that surface unblocked, as (sweep, face, s, t) in that
     /// sweep's photo. Rows top-down (as image files), so the painting script reads it without flipping.
     /// </summary>
@@ -58,22 +58,64 @@ namespace Matterportable.Core
         public byte[] Face, Hidden; // Hidden: 1 where the photo shows a prop (0 in the band around it)
         public ushort[] S, T;   // in the source face, 0..65535 (t from the bottom, like CubeFaces)
 
+        /// <summary>Surfaces copied from other sweeps: |normal.y| at least this (floors, steps, table tops).</summary>
+        public const float FloorNormal = 0.7f;
+
         /// <summary>How far a source sweep may be from the surface point.</summary>
         public const float Reach = 8f;
 
+        /// <summary>The sweeps tried as sources: the nearest to the photo's own.</summary>
+        public const int Candidates = 16;
+
         public static Reprojection Build(SpaceModel model, int sweep, int slice, int size, int band = 3)
         {
-            var cal = model.Calibration;
-            var layout = CubeFaces.TryBuildLookup(cal.Faces, out _, out _, out _) ? cal.Faces : CubeFaces.DefaultMatterportLayout();
+            var ctx = new Context(model, sweep, slice);
+            // A first pass at a coarse size counts which source sees most of what is hidden; the full pass then tries the
+            // sources in that order, so each area comes from one photo (a mix of many reads as patchwork).
+            var votes = new int[model.Sweeps.Count];
+            var coarse = Map(ctx, Math.Min(size, 64), 0, ctx.ByDistance);
+            for (int i = 0; i < coarse.Sweep.Length; i++) if (coarse.Hidden[i] == 1 && coarse.Sweep[i] >= 0) votes[coarse.Sweep[i]]++;
+            var order = new List<int>(ctx.ByDistance);
+            var rank = new Dictionary<int, int>();
+            for (int i = 0; i < order.Count; i++) rank[order[i]] = i;
+            order.Sort((x, y) => votes[x] != votes[y] ? votes[y].CompareTo(votes[x]) : rank[x].CompareTo(rank[y]));
+            return Map(ctx, size, band, order);
+        }
+
+        sealed class Context
+        {
+            public readonly SpaceModel Model;
+            public readonly int Sweep, Slice;
+            public readonly FaceBasis[] Layout;
+            public readonly bool[] IsProp, Room;
+            public readonly List<int> ByDistance = new List<int>();
+
+            public Context(SpaceModel model, int sweep, int slice)
+            {
+                Model = model;
+                Sweep = sweep;
+                Slice = slice;
+                var cal = model.Calibration;
+                Layout = CubeFaces.TryBuildLookup(cal.Faces, out _, out _, out _) ? cal.Faces : CubeFaces.DefaultMatterportLayout();
+                var pieces = model.PieceOfTriangle;
+                IsProp = new bool[pieces.Length];
+                Room = new bool[pieces.Length];
+                for (int t = 0; t < pieces.Length; t++) { IsProp[t] = pieces[t] > 0; Room[t] = !IsProp[t]; }
+                var here = model.Sweeps[sweep].Position;
+                for (int i = 0; i < model.Sweeps.Count; i++) if (i != sweep) ByDistance.Add(i);
+                ByDistance.Sort((x, y) => (model.Sweeps[x].Position - here).Length.CompareTo((model.Sweeps[y].Position - here).Length));
+                if (ByDistance.Count > Candidates) ByDistance.RemoveRange(Candidates, ByDistance.Count - Candidates);
+            }
+        }
+
+        static Reprojection Map(Context c, int size, int band, List<int> order)
+        {
+            var model = c.Model;
             var bvh = model.Geometry.Bvh;
-            var pieces = model.PieceOfTriangle;
-            var isProp = new bool[pieces.Length];
-            var room = new bool[pieces.Length];
-            for (int t = 0; t < pieces.Length; t++) { isProp[t] = pieces[t] > 0; room[t] = !isProp[t]; }
-            var mask = PropMasks.PieceMask(model, sweep, slice, size); // bottom-up
+            var mask = PropMasks.PieceMask(model, c.Sweep, c.Slice, size); // bottom-up
             var r = new Reprojection { Size = size, Sweep = new short[size * size], Face = new byte[size * size], Hidden = new byte[size * size],
                                        S = new ushort[size * size], T = new ushort[size * size] };
-            var s = model.Sweeps[sweep];
+            var s = model.Sweeps[c.Sweep];
             System.Threading.Tasks.Parallel.For(0, size, y =>
             {
                 for (int x = 0; x < size; x++)
@@ -89,13 +131,16 @@ namespace Matterportable.Core
                         }
                     if (!near) continue;
                     r.Hidden[o] = (byte)(hidden ? 1 : 0);
-                    var dir = (s.WorldFromPano * layout[slice].Direction((x + 0.5f) / size, (y + 0.5f) / size)).Normalized;
-                    if (!bvh.Raycast(s.Position, dir, 100f, out var behind, isProp)) continue; // the room behind the props
+                    var dir = (s.WorldFromPano * c.Layout[c.Slice].Direction((x + 0.5f) / size, (y + 0.5f) / size)).Normalized;
+                    if (!bvh.Raycast(s.Position, dir, 100f, out var behind, c.IsProp)) continue; // the room behind the props
+                    // Floors only: their texture (wood, tiles, rugs) is what painting can't invent, while a copied patch of
+                    // plain wall shows its slightly different exposure as a rectangle (the painting does walls well).
+                    if (Math.Abs(behind.Normal.Y) < FloorNormal) continue;
                     var p = s.Position + dir * behind.Distance;
-                    int best = Source(model, sweep, p, behind.Normal, room);
+                    int best = Source(model, order, p, behind.Normal, c.Room);
                     if (best < 0) continue;
                     var src = model.Sweeps[best];
-                    int face = CubeFaces.Lookup(layout, src.WorldFromPano.Transposed * (p - src.Position), out float fs, out float ft);
+                    int face = CubeFaces.Lookup(c.Layout, src.WorldFromPano.Transposed * (p - src.Position), out float fs, out float ft);
                     if (face < 0) continue;
                     r.Sweep[o] = (short)best;
                     r.Face[o] = (byte)face;
@@ -106,30 +151,26 @@ namespace Matterportable.Core
             return r;
         }
 
-        /// <summary>The nearest other sweep that sees p as the first surface, not too obliquely, with no prop near p
-        /// and none along the way: the photos show props wider than the scan (chair legs), so the line of sight must
-        /// miss every prop's box grown by <see cref="Margin"/>. Or -1.</summary>
-        static int Source(SpaceModel model, int except, Vec3 p, Vec3 normal, bool[] room)
+        /// <summary>The first sweep in <paramref name="order"/> that sees p as the first surface, within reach, not too
+        /// obliquely, with no prop near p and none along the way: the photos show props wider than the scan (chair
+        /// legs), so the line of sight must miss every prop's box grown by <see cref="Margin"/>. Or -1.</summary>
+        static int Source(SpaceModel model, List<int> order, Vec3 p, Vec3 normal, bool[] room)
         {
             var bvh = model.Geometry.Bvh;
             if (bvh.Nearest(p, PropMasks.Halo, room) >= 0) return -1;
-            int best = -1;
-            float bestDist = Reach;
-            for (int i = 0; i < model.Sweeps.Count; i++)
+            foreach (int i in order)
             {
-                if (i == except) continue;
                 var v = p - model.Sweeps[i].Position;
                 float d = v.Length;
-                if (d >= bestDist || d < 0.3f) continue;
+                if (d >= Reach || d < 0.3f) continue;
                 var dir = v / d;
                 if (Math.Abs(Vec3.Dot(dir, normal)) < 0.25f) continue; // grazing: smeared in that photo
                 if (!bvh.Raycast(model.Sweeps[i].Position, dir, d + 0.2f, out var hit)) continue;
                 if (Math.Abs(hit.Distance - d) > 0.03f + 0.01f * d || !room[hit.Triangle]) continue;
                 if (CrossesProp(model.Props, model.Sweeps[i].Position, dir, d - 0.05f)) continue;
-                best = i;
-                bestDist = d;
+                return i;
             }
-            return best;
+            return -1;
         }
 
         /// <summary>How far around a prop's box a line of sight must pass.</summary>

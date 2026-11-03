@@ -87,12 +87,15 @@ web and Godot specifics).
   `tools/reconstruct/`, pre-trained models only, CPU now and GPU later. Step 2: `PropMasks.PieceMask` (Core)
   ray-casts which prop each panorama pixel shows (CLI `masks`), counting room surfaces within 12 cm of a prop
   (`PropMasks.Halo`, `Bvh.Nearest`) as the prop: the scan misses thin parts the photo shows (a prop's box was too
-  big: a diagonal chair in a corner took the floor and LaMa painted it wall-coloured). `clean_panos.py` sharpens the
-  biggest pieces with MobileSAM (box prompts from those masks; ~0.5 s per face whatever its size, so only ~85 faces),
-  grows every mask by the calibration slack, copies in what other sweeps photographed behind each piece (the CLI's
+  big: a diagonal chair in a corner took the floor and LaMa painted it wall-coloured). `clean_panos.py` sharpens every
+  piece with MobileSAM (a loose box prompt around its scan mask: the scan misses glass tops; ~0.5 s per face, ~2 min),
+  grows every mask by the calibration slack, copies in what other sweeps photographed of the floor behind each piece (the CLI's
   fill maps, `Reprojection.Build`: the room surface behind the pixel with the props skipped, and the nearest other
-  sweep that saw it with no prop near it or across its line of sight; gain-matched per source on a band around the
-  hole), and paints the rest out with LaMa (fixed 512 px input, ~3.5 s per face) into
+  sweep that saw it with no prop near it or across its line of sight, trying first the sweep that sees most of the
+  face's hidden area so each area comes from one photo; 512 px maps, gzipped; gain-matched per source on a band
+  around the hole, then the remaining difference on the band spread smoothly into the copy; floors only: copied wall
+  patches showed as lighter rectangles, and LaMa paints plain walls well), and widens the painted maps by the paint's
+  feather (the viewers switch to the clean photo inside the map, so a tight map draws an edge where a shadow went), and paints the rest out with LaMa (fixed 512 px input, ~3.5 s per face) into
   `recon/clean/<sweep>/face<N>.jpg` + `painted<N>.png` and `clean.json` (the viewers read it at load).
 - **Measurement** behaviour (clicks, Escape, snapping, axes, units, what shows in which view, colours and line
   widths) lives only in Core `MeasureTool`; the engine files feed it the pointer ray and draw the screen-space

@@ -92,6 +92,8 @@ The server is graphql-java style. Validation errors carry a line/column location
   photos showed them on the wall behind, about 4° (several cm) from the chair's scanned triangles. Room surfaces
   within 12 cm of a prop's triangles cover them. The mesh also has holes behind furniture (the wall and floor the
   scanner never saw), where a viewer sees its background.
+- **Glass is invisible to the scan:** the living room's glass coffee table is in the mesh only as its frame, legs and
+  the vase, so outlines from the scan miss the top. Polished floors also reflect furniture.
 
 ## Panoramas
 

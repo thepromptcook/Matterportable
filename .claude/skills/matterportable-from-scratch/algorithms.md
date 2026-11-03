@@ -97,8 +97,16 @@ chair, is the test case; compare with `--move-prop` / `move=` and `--empty` / `e
   hidden pixel, ray-cast the scan with the props skipped to the room surface behind, then take the nearest other
   sweep that sees that point first, not at a grazing angle, with no prop within 12 cm of it and no prop's box (grown
   by 10 cm) across the line of sight. Without the last test the copies were full of chair-leg shards (the scan misses
-  thin parts the photos show). Match exposure per source on a band just outside the hole, then let LaMa paint only
-  what no sweep saw. On the user's house that copies about a quarter of the hidden pixels (two thirds before the
+  thin parts the photos show). Try sources in one order per face (the sweep that sees most of the hidden area first,
+  from a 64 px pass), or the copy is a patchwork of perspectives. Match exposure per source on a band just outside
+  the hole, spread what is left of the difference smoothly into the copy (blurred residual / blurred weight), then
+  let LaMa paint only what no sweep saw.
+- **Copy floors only:** a copied patch of plain wall from another viewpoint differs in exposure enough to read as a
+  lighter rectangle; floors carry texture painting can't invent. And widen the painted map by the paint's feather,
+  or the viewer's switch to the clean photo draws a hard edge where a shadow was removed.
+- **Glass and reflections:** the scanner sees through a glass table top, so the scan's outline misses it and the
+  unpainted part reads as a ghost; a loose box prompt lets Segment Anything take the whole table. A polished floor
+  reflects furniture outside every outline; LaMa stretches the reflection into a soft smear (still open). On the user's house that copies about a quarter of the hidden pixels (two thirds before the
   sight-line test); the floor around the dining chairs came out clean wood instead of a smear.
 - **The sky shows through holes in the scan** behind furniture: give the sky shader the same rule. (A fragment that
   ignores the F2 debug views is the sky.)

@@ -25,7 +25,7 @@ Commands:
         Summarise a cached space.
   diagnose <space dir>
         Print the diagnostics report (same as Copy Diagnostics in Unity; signed links redacted).
-  masks <space dir> [--size 256] [--fill-size 256] [--out DIR]
+  masks <space dir> [--size 256] [--fill-size 512] [--out DIR]
         For the reconstruction step: per panorama face that shows props, a PNG of which prop each pixel shows
         (red + 256 * green = prop index + 1) and masks.json (default DIR: <space dir>/recon/masks).
 ";
@@ -124,7 +124,7 @@ Commands:
         {
             var dir = o.Positional(0, "space dir");
             int size = int.Parse(o.Get("size", "256"), CultureInfo.InvariantCulture);
-            int fillSize = int.Parse(o.Get("fill-size", "256"), CultureInfo.InvariantCulture); // 0: no reprojection maps
+            int fillSize = int.Parse(o.Get("fill-size", "512"), CultureInfo.InvariantCulture); // 0: no reprojection maps
             var outDir = o.Get("out", Path.Combine(dir, "recon", "masks"));
             var model = SpaceModel.Load(dir, SpaceManifest.Load(dir), SpaceCalibration.LoadOrDefault(dir), new ConsoleLog());
             if (model.Geometry == null) throw new ArgumentException("The space has no mesh.");
@@ -148,7 +148,11 @@ Commands:
                     if (fillSize > 0) // where other sweeps saw what the props hide (the painting script copies it in)
                     {
                         var fill = $"s{s:D3}_f{f}.fill";
-                        File.WriteAllBytes(Path.Combine(outDir, fill), Reprojection.Build(model, s, f, fillSize).Serialize());
+                        using (var gz = new System.IO.Compression.GZipStream(File.Create(Path.Combine(outDir, fill)), System.IO.Compression.CompressionLevel.Fastest))
+                        {
+                            var bytes = Reprojection.Build(model, s, f, fillSize).Serialize(); // mostly "nothing": gzip, ~1/20
+                            gz.Write(bytes, 0, bytes.Length);
+                        }
                         entry.Set("fill", fill);
                     }
                     faces.Add(entry);
